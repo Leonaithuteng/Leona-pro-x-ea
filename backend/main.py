@@ -15,6 +15,8 @@ from .database import SessionLocal, init_db, User, Device, Command, Activity
 app = FastAPI(title="Leona Pro X EA API", version="1.3.0")
 
 JWT_SECRET = os.getenv("LEONA_JWT_SECRET")
+if not JWT_SECRET and os.getenv("ENVIRONMENT", "development").lower() in {"production", "prod"}:
+    raise RuntimeError("LEONA_JWT_SECRET must be configured in production")
 if not JWT_SECRET:
     JWT_SECRET = "DEV_ONLY_CHANGE_ME"
 JWT_ALGORITHM = "HS256"
@@ -135,7 +137,10 @@ def list_devices(user: User = Depends(get_current_user)):
         return {"items": [{"device_id": d.device_id, "device_name": d.device_name, "broker": d.broker,
                            "account": d.account, "status": d.status, "last_seen": d.last_seen.isoformat() if d.last_seen else None,
                            "balance": d.balance, "equity": d.equity, "profit": d.profit, "drawdown": d.drawdown,
-                           "ea_active": d.ea_active} for d in rows]}
+                           "ea_active": d.ea_active,
+                           "risk_percent": d.risk_percent, "sl_points": d.sl_points,
+                           "tp_points": d.tp_points, "max_daily_loss": d.max_daily_loss,
+                           "max_drawdown": d.max_drawdown} for d in rows]}
 
 @app.get("/api/v1/devices/{device_id}/settings")
 def get_device_settings(device_id: str, user: User = Depends(get_current_user)):
