@@ -132,7 +132,7 @@ class _DashboardPageState extends State<DashboardPage> {
     super.dispose();
   }
 
-  Map<String,String> authHeaders()=>{'Authorization':'Bearer $token','Content-Type':'application/json'};
+  Map<String,String> authHeaders()=>{'Authorization':'Bearer ${widget.token}','Content-Type':'application/json'};
 
   Future<void> loadStatus() async {
     try {
