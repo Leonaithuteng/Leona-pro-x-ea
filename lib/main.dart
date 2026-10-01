@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 const String apiBaseUrl = 'https://leona-pro-x-api.onrender.com';
 
@@ -27,13 +28,43 @@ class LeonaProXApp extends StatelessWidget {
         ),
         cardColor: const Color(0xFF151B23),
       ),
-      home: const DashboardPage(),
+      home: const AuthGate(),
     );
   }
 }
 
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
+  @override State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  String? token;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async { final p=await SharedPreferences.getInstance(); if(mounted)setState(()=>token=p.getString('access_token')); }
+  @override Widget build(BuildContext context) => token == null ? const LoginPage() : DashboardPage(token: token!);
+}
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+  @override State<LoginPage> createState() => _LoginPageState();
+}
+class _LoginPageState extends State<LoginPage> {
+  final u=TextEditingController(), p=TextEditingController(); bool busy=false; String error='';
+  Future<void> login() async {
+    if(u.text.trim().isEmpty||p.text.isEmpty){setState(()=>error='Enter username and password.');return;}
+    setState(()=>{busy=true,error=''}.toString());
+    try { final r=await http.post(Uri.parse('$apiBaseUrl/api/v1/auth/login'),headers:{'Content-Type':'application/json'},body:jsonEncode({'username':u.text.trim(),'password':p.text})).timeout(const Duration(seconds:10));
+      if(r.statusCode!=200) throw Exception(); final d=jsonDecode(r.body); final sp=await SharedPreferences.getInstance(); await sp.setString('access_token',d['access_token']);
+      if(mounted)Navigator.of(context).pushReplacement(MaterialPageRoute(builder:(_)=>DashboardPage(token:d['access_token'])));
+    } catch(_){if(mounted)setState(()=>error='Login failed. Check your credentials.');} finally{if(mounted)setState(()=>busy=false);}
+  }
+  @override Widget build(BuildContext context)=>Scaffold(body:Center(child:SingleChildScrollView(padding:const EdgeInsets.all(28),child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:430),child:Column(children:[const Icon(Icons.auto_graph,size:64,color:Colors.greenAccent),const SizedBox(height:18),const Text('LEONA PRO X EA',style:TextStyle(fontSize:25,fontWeight:FontWeight.bold,letterSpacing:2)),const SizedBox(height:30),TextField(controller:u,decoration:const InputDecoration(labelText:'Username',border:OutlineInputBorder())),const SizedBox(height:14),TextField(controller:p,obscureText:true,decoration:const InputDecoration(labelText:'Password',border:OutlineInputBorder())),if(error.isNotEmpty)Padding(padding:const EdgeInsets.only(top:12),child:Text(error,style:const TextStyle(color:Colors.redAccent))),const SizedBox(height:20),SizedBox(width:double.infinity,child:ElevatedButton(onPressed:busy?null:login,child:busy?const CircularProgressIndicator():const Text('SIGN IN')))])))));
+}
+
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key});
+  final String token;
+  const DashboardPage({super.key, required this.token});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -72,10 +103,13 @@ class _DashboardPageState extends State<DashboardPage> {
     super.dispose();
   }
 
+  Map<String,String> get headers => {'Content-Type':'application/json','Authorization':'Bearer ${widget.token}'};
+
   Future<void> loadStatus() async {
     try {
       final response = await http.get(
         Uri.parse('$apiBaseUrl/api/v1/ea/status'),
+        headers: headers,
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -128,9 +162,11 @@ class _DashboardPageState extends State<DashboardPage> {
       final response = await http
           .post(
             Uri.parse('$apiBaseUrl/api/v1/ea/command'),
-            headers: {
+            headers: headers,
+            headers: headers,
+            /*
               'Content-Type': 'application/json',
-            },
+            },*/
             body: jsonEncode({
               'command': command,
               'payload': {},
@@ -171,6 +207,8 @@ class _DashboardPageState extends State<DashboardPage> {
       }
     }
   }
+
+  Future<void> logout() async { final sp=await SharedPreferences.getInstance(); await sp.remove('access_token'); if(mounted)Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder:(_)=>const LoginPage()),(_)=>false); }
 
   void showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -271,10 +309,8 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ),
         actions: [
-          IconButton(
-            onPressed: loadStatus,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(onPressed: loadStatus, icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: logout, icon: const Icon(Icons.logout)),
         ],
       ),
       body: RefreshIndicator(
