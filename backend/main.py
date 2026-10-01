@@ -71,18 +71,25 @@ def bootstrap_admin():
     if not username or not password:
         return
     with SessionLocal() as db:
-        user = db.scalar(select(User).where(User.username == username))
-        if user is None:
-            db.add(User(username=username, password_hash=pwd_context.hash(password), active=True))
-            db.commit()
-            return
+        sync_admin_credentials(db, username, password)
 
-        # Keep the configured Render admin credentials synchronized.
-        # This also repairs an admin account created with an older password.
-        if not pwd_context.verify(password, user.password_hash) or not user.active:
-            user.password_hash = pwd_context.hash(password)
-            user.active = True
-            db.commit()
+def sync_admin_credentials(db, username: str, password: str):
+    """Ensure the configured Render admin account exists and is usable."""
+    user = db.scalar(select(User).where(User.username == username))
+    if user is None:
+        db.add(User(username=username, password_hash=pwd_context.hash(password), active=True))
+        db.commit()
+        return
+
+    try:
+        password_matches = pwd_context.verify(password, user.password_hash)
+    except Exception:
+        password_matches = False
+
+    if not password_matches or not user.active:
+        user.password_hash = pwd_context.hash(password)
+        user.active = True
+        db.commit()
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
     if credentials is None or credentials.scheme.lower() != "bearer":
@@ -117,11 +124,29 @@ def health():
 
 @app.post("/api/v1/auth/login")
 def login(request: LoginRequest):
+    configured_username = os.getenv("LEONA_ADMIN_USERNAME")
+    configured_password = os.getenv("LEONA_ADMIN_PASSWORD")
+
     with SessionLocal() as db:
+        # Reconcile the configured admin account on every login attempt.
+        # This makes authentication resilient to restarts, ephemeral SQLite
+        # storage, and an admin password changed in Render after deployment.
+        if configured_username and configured_password and request.username == configured_username:
+            sync_admin_credentials(db, configured_username, configured_password)
+
         user = db.scalar(select(User).where(User.username == request.username))
-        if user is None or not user.active or not pwd_context.verify(request.password, user.password_hash):
+        if user is None or not user.active:
             raise HTTPException(status_code=401, detail="Invalid username or password")
-    return {"access_token": create_token(request.username), "token_type": "bearer"}
+
+        try:
+            password_matches = pwd_context.verify(request.password, user.password_hash)
+        except Exception:
+            password_matches = False
+
+        if not password_matches:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    return {"access_token": create_token(user.username), "token_type": "bearer"}
 
 @app.get("/api/v1/auth/me")
 def me(user: User = Depends(get_current_user)):
