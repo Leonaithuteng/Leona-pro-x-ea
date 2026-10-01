@@ -46,7 +46,8 @@ input string DeviceId = "";
 input string EaToken = "";
 input int RemotePollSeconds = 5;
 input bool EnableRemoteControl = true;
-input bool RequireWeltradeBroker = true;
+input bool RequireSupportedBroker = true;
+input string AllowedBrokers = "weltrade,deriv";
 input bool SyntheticOnly = true;
 input bool DebugTrading = true;
 
@@ -98,8 +99,14 @@ void SendHeartbeat()
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
    double pl=AccountInfoDouble(ACCOUNT_PROFIT);
    double dd=bal>0 ? (bal-eq)/bal*100.0 : 0.0;
-   string body=StringFormat("{\"balance\":%.2f,\"equity\":%.2f,\"profit\":%.2f,\"drawdown\":%.2f,\"ea_active\":%s}",
-      bal,eq,pl,dd,(EA_Active && remoteTradingEnabled && !isTradingPaused)?"true":"false");
+   string broker=AccountInfoString(ACCOUNT_COMPANY);
+   string symbol=_Symbol;
+   StringReplace(broker,"\\","\\\\");
+   StringReplace(broker,"\"","\\\"");
+   StringReplace(symbol,"\\","\\\\");
+   StringReplace(symbol,"\"","\\\"");
+   string body=StringFormat("{\"balance\":%.2f,\"equity\":%.2f,\"profit\":%.2f,\"drawdown\":%.2f,\"ea_active\":%s,\"broker\":\"%s\",\"symbol\":\"%s\"}",
+      bal,eq,pl,dd,(EA_Active && remoteTradingEnabled && !isTradingPaused)?"true":"false",broker,symbol);
    string response;
    bool ok=HttpRequest("POST",Url("/api/v1/ea/heartbeat"),body,response,EaToken);
    if(ok) Print("Leona heartbeat accepted by API");
@@ -190,7 +197,43 @@ void ProcessRemoteCommands()
       bool ok=true;
       string msg="Command executed";
 
-      if(cmd=="START_ROBOT") { remoteTradingEnabled=true; GlobalVariableSet("LEONA_EA_ACTIVE",1.0); }
+      if(cmd=="SET_INSTRUMENT")
+      {
+         string targetBroker=ExtractString(response,"broker",idEnd);
+         string targetSymbol=ExtractString(response,"symbol",idEnd);
+         if(targetBroker=="" || targetSymbol=="")
+         {
+            ok=false;
+            msg="Missing broker or symbol";
+         }
+         else
+         {
+            string checkSymbol=targetSymbol;
+            StringToLower(checkSymbol);
+            bool synthetic=StringFind(checkSymbol,"vol")>=0 || StringFind(checkSymbol,"volatility")>=0;
+            string checkBroker=targetBroker;
+            StringToLower(checkBroker);
+            if((checkBroker!="weltrade" && checkBroker!="deriv") || !synthetic)
+            {
+               ok=false;
+               msg="Unsupported synthetic broker or symbol";
+            }
+            else if(!SymbolSelect(targetSymbol,true))
+            {
+               ok=false;
+               msg="Symbol is not available in this MT5 account: "+targetSymbol;
+            }
+            else
+            {
+               msg="Switching chart to "+targetBroker+" / "+targetSymbol;
+               Print("Leona: switching instrument to ",targetBroker," / ",targetSymbol);
+               ReportCommand(id,"COMPLETED",msg);
+               ChartSetSymbolPeriod(0,targetSymbol,PERIOD_M5);
+               return;
+            }
+         }
+      }
+      else if(cmd=="START_ROBOT") { remoteTradingEnabled=true; GlobalVariableSet("LEONA_EA_ACTIVE",1.0); }
       else if(cmd=="STOP_ROBOT") { remoteTradingEnabled=false; GlobalVariableSet("LEONA_EA_ACTIVE",0.0); }
       else if(cmd=="CLOSE_ALL") CloseAllPositions();
       else if(cmd=="UPDATE_RISK")
@@ -208,11 +251,27 @@ void ProcessRemoteCommands()
 
 bool BrokerAndSymbolOK()
 {
-   if(RequireWeltradeBroker)
+   if(RequireSupportedBroker)
    {
       string company=AccountInfoString(ACCOUNT_COMPANY);
       StringToLower(company);
-      if(StringFind(company,"weltrade")<0) return false;
+      bool brokerOk=false;
+      string allowed=AllowedBrokers;
+      StringToLower(allowed);
+      string parts[];
+      int count=StringSplit(allowed,',',parts);
+      for(int i=0;i<count;i++)
+      {
+         string name=parts[i];
+         StringTrimLeft(name);
+         StringTrimRight(name);
+         if(name!="" && StringFind(company,name)>=0)
+         {
+            brokerOk=true;
+            break;
+         }
+      }
+      if(!brokerOk) return false;
    }
 
    if(!SyntheticOnly) return true;
@@ -221,9 +280,7 @@ bool BrokerAndSymbolOK()
    StringToLower(symbol);
    bool synthetic=
       StringFind(symbol,"vol")>=0 ||
-      StringFind(symbol,"painx")>=0 ||
-      StringFind(symbol,"gainx")>=0 ||
-      StringFind(symbol,"flipx")>=0;
+      StringFind(symbol,"volatility")>=0;
 
    return synthetic;
 }
