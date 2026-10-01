@@ -85,12 +85,13 @@ bool HttpRequest(string method,string url,string body,string &response,string to
    int code=WebRequest(method,url,headers,10000,data,result,resultHeaders);
    if(code<0) { Print("Leona API WebRequest error: ",GetLastError()); return false; }
    response=CharArrayToString(result,0,-1,CP_UTF8);
+   Print("Leona API ",method," HTTP ",code," -> ",url);
    return code>=200 && code<300;
 }
 
 void SendHeartbeat()
 {
-   if(!EnableRemoteControl || EaToken=="") return;
+   if(!EnableRemoteControl || EaToken=="") { Print("Leona heartbeat skipped: remote control disabled or EA token missing"); return; }
    double bal=AccountInfoDouble(ACCOUNT_BALANCE);
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
    double pl=AccountInfoDouble(ACCOUNT_PROFIT);
@@ -98,7 +99,9 @@ void SendHeartbeat()
    string body=StringFormat("{\"balance\":%.2f,\"equity\":%.2f,\"profit\":%.2f,\"drawdown\":%.2f,\"ea_active\":%s}",
       bal,eq,pl,dd,(EA_Active && remoteTradingEnabled && !isTradingPaused)?"true":"false");
    string response;
-   HttpRequest("POST",Url("/api/v1/ea/heartbeat"),body,response,EaToken);
+   bool ok=HttpRequest("POST",Url("/api/v1/ea/heartbeat"),body,response,EaToken);
+   if(ok) Print("Leona heartbeat accepted by API");
+   else Print("Leona heartbeat failed");
 }
 
 void ReportCommand(string id,string status,string message)
@@ -431,6 +434,7 @@ int OnInit()
    maxDrawdownLive=MaxDrawdown;
    remoteTradingEnabled=EA_Active;
    EventSetTimer(MathMax(1,RemotePollSeconds));
+   Print("Leona Pro X initialized. DeviceId set=",DeviceId!=""," Token set=",EaToken!=""," Timer=",MathMax(1,RemotePollSeconds),"s");
    return INIT_SUCCEEDED;
 }
 
