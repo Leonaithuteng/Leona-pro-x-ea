@@ -38,6 +38,11 @@ class Device(Base):
     profit: Mapped[float | None] = mapped_column(Float, nullable=True)
     drawdown: Mapped[float | None] = mapped_column(Float, nullable=True)
     ea_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    risk_percent: Mapped[float] = mapped_column(Float, default=1.0)
+    sl_points: Mapped[int] = mapped_column(Integer, default=150)
+    tp_points: Mapped[int] = mapped_column(Integer, default=250)
+    max_daily_loss: Mapped[float] = mapped_column(Float, default=3.0)
+    max_drawdown: Mapped[float] = mapped_column(Float, default=10.0)
 
 
 class Command(Base):
