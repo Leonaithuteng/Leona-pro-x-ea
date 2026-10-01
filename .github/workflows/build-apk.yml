@@ -25,6 +25,10 @@ jobs:
             --platforms=android \
             --org com.leonaprox
 
+      - name: Add Android Internet permission
+        run: |
+          sed -i '/<manifest xmlns:android=/a\    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
+
       - name: Install dependencies
         run: flutter pub get
 
