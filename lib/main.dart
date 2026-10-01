@@ -107,6 +107,9 @@ class _DashboardPageState extends State<DashboardPage> {
   String lastAction = 'None';
   List<dynamic> devices = [];
   String? selectedDeviceId;
+  String selectedBroker = 'Weltrade';
+  String selectedSymbol = 'FX Vol 20';
+  bool instrumentLoading = false;
 
   Timer? refreshTimer;
 
@@ -175,6 +178,12 @@ class _DashboardPageState extends State<DashboardPage> {
           }
 
           robotActive = data['ea_active'] == true;
+          if (data['broker'] != null && data['broker'].toString().isNotEmpty) {
+            selectedBroker = data['broker'].toString();
+          }
+          if (data['symbol'] != null && data['symbol'].toString().isNotEmpty) {
+            selectedSymbol = data['symbol'].toString();
+          }
         });
       } else {
         throw Exception('API returned ${response.statusCode}');
@@ -249,6 +258,162 @@ class _DashboardPageState extends State<DashboardPage> {
         });
       }
     }
+  }
+
+  static const Map<String, List<String>> syntheticSymbols = {
+    'Weltrade': [
+      'FX Vol 20', 'FX Vol 30', 'FX Vol 40', 'FX Vol 50', 'FX Vol 60',
+      'FX Vol 70', 'FX Vol 80', 'FX Vol 90', 'FX Vol 99',
+      'SFX Vol 20', 'SFX Vol 30', 'SFX Vol 40', 'SFX Vol 50',
+      'SFX Vol 60', 'SFX Vol 70', 'SFX Vol 80', 'SFX Vol 90', 'SFX Vol 99',
+    ],
+    'Deriv': [
+      'Volatility 10 Index', 'Volatility 25 Index', 'Volatility 50 Index',
+      'Volatility 75 Index', 'Volatility 100 Index', 'Volatility 150 Index',
+      'Volatility 250 Index',
+    ],
+  };
+
+  Future<void> selectInstrument(String broker, String symbol) async {
+    if (selectedDeviceId == null || instrumentLoading) {
+      showMessage('Register and select an MT5 device first.');
+      return;
+    }
+
+    setState(() {
+      instrumentLoading = true;
+      selectedBroker = broker;
+      selectedSymbol = symbol;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/v1/ea/command'),
+        headers: headers,
+        body: jsonEncode({
+          'command': 'SET_INSTRUMENT',
+          'device_id': selectedDeviceId,
+          'payload': {
+            'broker': broker,
+            'symbol': symbol,
+          },
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        lastAction = 'Instrument switch queued: $broker • $symbol';
+        showMessage('Switch queued — MT5 will move to $symbol');
+        await loadStatus();
+      } else {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+    } catch (_) {
+      showMessage('Could not queue instrument switch.');
+    } finally {
+      if (mounted) setState(() => instrumentLoading = false);
+    }
+  }
+
+  Widget instrumentSelector() {
+    final symbols = syntheticSymbols[selectedBroker] ?? const <String>[];
+    if (!symbols.contains(selectedSymbol)) {
+      selectedSymbol = symbols.isNotEmpty ? symbols.first : '';
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.bolt, color: Colors.greenAccent),
+                SizedBox(width: 8),
+                Text(
+                  'SYNTHETIC MARKET',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Choose the broker and volatility index the EA should trade.',
+              style: TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              value: selectedBroker,
+              decoration: const InputDecoration(
+                labelText: 'BROKER',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.account_balance),
+              ),
+              items: syntheticSymbols.keys.map((broker) {
+                return DropdownMenuItem<String>(
+                  value: broker,
+                  child: Text(broker),
+                );
+              }).toList(),
+              onChanged: instrumentLoading ? null : (broker) {
+                if (broker == null) return;
+                final first = syntheticSymbols[broker]!.first;
+                setState(() {
+                  selectedBroker = broker;
+                  selectedSymbol = first;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: selectedSymbol,
+              decoration: const InputDecoration(
+                labelText: 'VOLATILITY INDEX',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.show_chart),
+              ),
+              items: symbols.map((symbol) {
+                return DropdownMenuItem<String>(
+                  value: symbol,
+                  child: Text(symbol),
+                );
+              }).toList(),
+              onChanged: instrumentLoading ? null : (symbol) {
+                if (symbol != null) setState(() => selectedSymbol = symbol);
+              },
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: instrumentLoading
+                    ? null
+                    : () => selectInstrument(selectedBroker, selectedSymbol),
+                icon: instrumentLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.swap_horiz),
+                label: Text(
+                  instrumentLoading ? 'SWITCHING...' : 'APPLY INSTRUMENT',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'MT5 must be logged into the selected broker and the exact symbol must be available in Market Watch.',
+              style: TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> logout() async { final sp=await SharedPreferences.getInstance(); await sp.remove('access_token'); if(mounted)Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder:(_)=>const LoginPage()),(_)=>false); }
@@ -444,6 +609,10 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
 
             if (devices.isNotEmpty) const SizedBox(height: 16),
+
+            instrumentSelector(),
+
+            const SizedBox(height: 16),
 
             Card(
               child: Padding(
@@ -644,7 +813,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
             Center(
               child: Text(
-                'Leona Pro X EA • API: Connected Architecture',
+                'Leona Pro X EA • Weltrade + Deriv Synthetic Control',
                 style: TextStyle(
                   color: Colors.white38,
                   fontSize: 11,
