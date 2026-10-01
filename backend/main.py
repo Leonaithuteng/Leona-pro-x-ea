@@ -35,6 +35,13 @@ class DeviceRegister(BaseModel):
     broker: str = "Weltrade"
     account: Optional[str] = None
 
+class RiskSettings(BaseModel):
+    risk_percent: float = Field(default=1.0, ge=0.01, le=10.0)
+    sl_points: int = Field(default=150, ge=1, le=100000)
+    tp_points: int = Field(default=250, ge=1, le=100000)
+    max_daily_loss: float = Field(default=3.0, ge=0.1, le=50.0)
+    max_drawdown: float = Field(default=10.0, ge=0.1, le=90.0)
+
 class CommandRequest(BaseModel):
     command: str
     device_id: Optional[str] = None
