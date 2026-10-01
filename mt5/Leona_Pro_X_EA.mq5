@@ -48,6 +48,7 @@ input int RemotePollSeconds = 5;
 input bool EnableRemoteControl = true;
 input bool RequireWeltradeBroker = true;
 input bool SyntheticOnly = true;
+input bool DebugTrading = true;
 
 CTrade trade;
 CAccountInfo accountInfo;
@@ -371,7 +372,10 @@ void OpenBuy()
    if(trade.Buy(lot,_Symbol,ask,sl,tp,"Leona Pro X BUY"))
    {
       lastTradeTime=TimeCurrent(); tradesThisHour++;
+      Print("Leona BUY opened. lot=",lot," SL=",sl," TP=",tp);
    }
+   else
+      Print("Leona BUY rejected. retcode=",trade.ResultRetcode()," description=",trade.ResultRetcodeDescription()," lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
 }
 
 void OpenSell()
@@ -383,7 +387,10 @@ void OpenSell()
    if(trade.Sell(lot,_Symbol,bid,sl,tp,"Leona Pro X SELL"))
    {
       lastTradeTime=TimeCurrent(); tradesThisHour++;
+      Print("Leona SELL opened. lot=",lot," SL=",sl," TP=",tp);
    }
+   else
+      Print("Leona SELL rejected. retcode=",trade.ResultRetcode()," description=",trade.ResultRetcodeDescription()," lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
 }
 
 void ManagePositions()
@@ -417,6 +424,7 @@ void ManagePositions()
 int OnInit()
 {
    trade.SetExpertMagicNumber(123456);
+   trade.SetTypeFillingBySymbol(_Symbol);
    handleMA=iMA(_Symbol,PERIOD_M5,20,0,MODE_SMA,PRICE_CLOSE);
    handleRSI=iRSI(_Symbol,PERIOD_M5,14,PRICE_CLOSE);
    handleADX=iADX(_Symbol,PERIOD_M5,14);
@@ -456,16 +464,23 @@ void OnTick()
 {
    ManagePositions();
    if(!EA_Active || !remoteTradingEnabled || isTradingPaused) return;
-   if(!BrokerAndSymbolOK()) return;
-   if(!SpreadOK() || !TimeOK() || !RiskManagementOK() || !VolatilityOK()) return;
+   if(!BrokerAndSymbolOK()) { if(DebugTrading) Print("Leona DEBUG: blocked by broker/symbol filter. Company=",AccountInfoString(ACCOUNT_COMPANY)," Symbol=",_Symbol); return; }
+   long spread=SymbolInfoInteger(_Symbol,SYMBOL_SPREAD);
+   if(spread>MaxSpread) { if(DebugTrading) Print("Leona DEBUG: blocked by spread. spread=",spread," max=",MaxSpread); return; }
+   if(!TimeOK()) { if(DebugTrading) Print("Leona DEBUG: blocked by trading hours."); return; }
+   if(!RiskManagementOK()) { if(DebugTrading) Print("Leona DEBUG: blocked by risk management."); return; }
+   if(!VolatilityOK()) { if(DebugTrading) Print("Leona DEBUG: blocked by volatility. ATR points outside ",MinVolatility,"-",MaxVolatility); return; }
    if(TimeCurrent()-lastTradeTime<CooldownSeconds) return;
 
    double adx=BufferValue(handleADX,0,0);
-   if(adx==EMPTY_VALUE || adx<MinTrendStrength*10.0) return;
+   if(adx==EMPTY_VALUE || adx<MinTrendStrength*10.0) { if(DebugTrading) Print("Leona DEBUG: blocked by ADX. ADX=",adx," minimum=",MinTrendStrength*10.0); return; }
 
    int score=AIScore();
    int threshold=MathMax(1,AIScoreThreshold);
+   bool buyConfirm=MultiTimeframeConfirm(true);
+   bool sellConfirm=MultiTimeframeConfirm(false);
+   if(DebugTrading && (score>=threshold || score<=-threshold)) Print("Leona DEBUG: score=",score," threshold=",threshold," ADX=",adx," buyConfirm=",buyConfirm," sellConfirm=",sellConfirm);
 
-   if(score>=threshold && MultiTimeframeConfirm(true)) OpenBuy();
-   else if(score<=-threshold && MultiTimeframeConfirm(false)) OpenSell();
+   if(score>=threshold && buyConfirm) OpenBuy();
+   else if(score<=-threshold && sellConfirm) OpenSell();
 }
