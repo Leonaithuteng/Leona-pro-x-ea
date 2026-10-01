@@ -59,6 +59,11 @@ input double MinMarginLevel = 300.0;
 input double MaxLotPercentOfBalance = 5.0;
 input double BalancePerOpenTrade = 100.0;
 input int MaxSlippagePoints = 20;
+input bool EnableAdaptiveLearning = true;
+input int LearningWindowTrades = 30;
+input double AdaptiveThresholdMin = 4.0;
+input double AdaptiveThresholdMax = 9.0;
+input double LearningStep = 0.25;
 
 CTrade trade;
 CAccountInfo accountInfo;
@@ -191,6 +196,17 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
              +HistoryDealGetDouble(trans.deal,DEAL_COMMISSION);
    if(pnl<0) consecutiveLosses++;
    else if(pnl>0) consecutiveLosses=0;
+   learningTrades++;
+   learningNetProfit+=pnl;
+   if(pnl>0) learningWins++; else if(pnl<0) learningLosses++;
+   if(EnableAdaptiveLearning && learningTrades>=LearningWindowTrades)
+   {
+      double winRate=(double)learningWins/(double)MathMax(learningTrades,1);
+      if(winRate<0.40) adaptiveThreshold=MathMin(AdaptiveThresholdMax,adaptiveThreshold+LearningStep);
+      else if(winRate>0.60) adaptiveThreshold=MathMax(AdaptiveThresholdMin,adaptiveThreshold-LearningStep);
+      learningTrades=0; learningWins=0; learningLosses=0; learningNetProfit=0.0;
+      Print("Leona Learning: adjusted entry threshold to ",DoubleToString(adaptiveThreshold,2));
+   }
    Print("Leona: closed trade P/L=",DoubleToString(pnl,2)," consecutive losses=",consecutiveLosses);
 }
 
@@ -584,6 +600,7 @@ int OnInit()
    maxDailyLossLive=MaxDailyLoss;
    maxDrawdownLive=MaxDrawdown;
    remoteTradingEnabled=EA_Active;
+   adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,(double)AIScoreThreshold));
    EventSetTimer(MathMax(1,RemotePollSeconds));
    Print("Leona Pro X initialized. DeviceId set=",DeviceId!=""," Token set=",EaToken!=""," Timer=",MathMax(1,RemotePollSeconds),"s");
    return INIT_SUCCEEDED;
@@ -618,7 +635,7 @@ void OnTick()
    if(adx==EMPTY_VALUE || adx<MinTrendStrength*10.0) { if(DebugTrading) Print("Leona DEBUG: blocked by ADX. ADX=",adx," minimum=",MinTrendStrength*10.0); return; }
 
    int score=AIScore();
-   int threshold=MathMax(1,AIScoreThreshold);
+   int threshold=(int)MathRound(EnableAdaptiveLearning ? adaptiveThreshold : (double)AIScoreThreshold);
    bool buyConfirm=MultiTimeframeConfirm(true);
    bool sellConfirm=MultiTimeframeConfirm(false);
    if(DebugTrading && (score>=threshold || score<=-threshold)) Print("Leona DEBUG: score=",score," threshold=",threshold," ADX=",adx," buyConfirm=",buyConfirm," sellConfirm=",sellConfirm);
