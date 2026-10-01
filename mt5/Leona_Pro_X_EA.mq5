@@ -50,7 +50,10 @@ input bool RequireSupportedBroker = true;
 input string AllowedBrokers = "weltrade,deriv";
 input bool SyntheticOnly = true;
 input bool DebugTrading = true;
-input int MaxOpenPositions = 10;
+input int MaxOpenPositions = 20;
+input double MinimumAccountBalance = 2.0;
+input int MinimumProfitScalePositions = 5;
+input double ProfitRequiredToScale = 0.01;
 input double MinMarginLevel = 300.0;
 input double MaxLotPercentOfBalance = 5.0;
 input double BalancePerOpenTrade = 100.0;
@@ -353,14 +356,24 @@ bool RiskManagementOK()
    double marginLevel=AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
    if(marginLevel>0 && marginLevel<MinMarginLevel) return false;
    int openCount=0;
+   double basketProfit=0.0;
    for(int i=PositionsTotal()-1;i>=0;i--)
    {
       ulong ticket=PositionGetTicket(i);
-      if(ticket>0 && PositionSelectByTicket(ticket) && PositionGetInteger(POSITION_MAGIC)==123456) openCount++;
+      if(ticket>0 && PositionSelectByTicket(ticket) && PositionGetInteger(POSITION_MAGIC)==123456)
+      {
+         openCount++;
+         basketProfit += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      }
    }
    int balanceBasedMax=(int)MathFloor(AccountInfoDouble(ACCOUNT_BALANCE)/MathMax(BalancePerOpenTrade,0.01));
    int allowedOpenTrades=MathMax(1,MathMin(MaxOpenPositions,balanceBasedMax));
-   if(openCount>=allowedOpenTrades) return false;
+   double balance=AccountInfoDouble(ACCOUNT_BALANCE);
+   if(balance<MinimumAccountBalance) return false;
+   bool scalingProfit=basketProfit>=ProfitRequiredToScale;
+   int profitScaledLimit=scalingProfit ? MathMax(allowedOpenTrades,MinimumProfitScalePositions) : allowedOpenTrades;
+   profitScaledLimit=MathMin(MaxOpenPositions,profitScaledLimit);
+   if(openCount>=profitScaledLimit) return false;
 
    MqlDateTime t; TimeToStruct(TimeCurrent(),t);
    if(currentHour!=t.hour) { currentHour=t.hour; tradesThisHour=0; }
