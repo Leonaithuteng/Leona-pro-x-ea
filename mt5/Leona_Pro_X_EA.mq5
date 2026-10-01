@@ -59,6 +59,15 @@ input double MinMarginLevel = 300.0;
 input double MaxLotPercentOfBalance = 5.0;
 input double BalancePerOpenTrade = 100.0;
 input int MaxSlippagePoints = 20;
+
+// Live remote risk settings and bounded adaptive-learning state
+double lotSizeLive=0.01;
+bool useRiskSizingLive=true;
+int learningTrades=0;
+int learningWins=0;
+int learningLosses=0;
+double learningNetProfit=0.0;
+double adaptiveThreshold=6.0;
 input bool EnableAdaptiveLearning = true;
 input int LearningWindowTrades = 30;
 input double AdaptiveThresholdMin = 4.0;
