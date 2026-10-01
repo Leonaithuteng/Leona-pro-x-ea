@@ -21,7 +21,7 @@ input double MinTrendStrength = 2.5;
 input int AIScoreThreshold = 6; // Minimum AI score required for an entry
 
 input group "Time & Cooldown"
-input int CooldownSeconds = 20;
+input int CooldownSeconds = 1;
 input int MaxTradesPerHour = 100;
 input bool TradeDuringNews = false;
 input int StartHour = 0;
@@ -171,6 +171,22 @@ bool ApplyRiskSettings(string json)
    if(ExtractNumber(json,"max_daily_loss",v) && v>=0.1 && v<=50.0) { maxDailyLossLive=v; any=true; }
    if(ExtractNumber(json,"max_drawdown",v) && v>=0.1 && v<=90.0) { maxDrawdownLive=v; any=true; }
    return any;
+}
+
+void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
+{
+   if(trans.type!=TRADE_TRANSACTION_DEAL_ADD || trans.deal==0) return;
+   if(!HistoryDealSelect(trans.deal)) return;
+   long magic=HistoryDealGetInteger(trans.deal,DEAL_MAGIC);
+   if(magic!=123456) return;
+   long entry=HistoryDealGetInteger(trans.deal,DEAL_ENTRY);
+   if(entry!=DEAL_ENTRY_OUT && entry!=DEAL_ENTRY_OUT_BY) return;
+   double pnl=HistoryDealGetDouble(trans.deal,DEAL_PROFIT)
+             +HistoryDealGetDouble(trans.deal,DEAL_SWAP)
+             +HistoryDealGetDouble(trans.deal,DEAL_COMMISSION);
+   if(pnl<0) consecutiveLosses++;
+   else if(pnl>0) consecutiveLosses=0;
+   Print("Leona: closed trade P/L=",DoubleToString(pnl,2)," consecutive losses=",consecutiveLosses);
 }
 
 void CloseAllPositions()
