@@ -22,11 +22,12 @@ string JsonNumber(double value)
    return DoubleToString(value, 2);
 }
 
-bool HttpRequest(string method, string url, string body, string &response)
+bool HttpRequest(string method, string url, string body, string &response, string token = "")
 {
    char data[];
    char result[];
    string headers = "Content-Type: application/json\r\n";
+   if(token != "") headers += "X-EA-Token: " + token + "\r\n";
    string result_headers;
 
    if(body != "")
@@ -66,7 +67,8 @@ bool SendHeartbeat()
       "POST",
       Url("/api/v1/ea/heartbeat"),
       body,
-      response
+      response,
+      EaToken
    );
 }
 
@@ -101,7 +103,8 @@ void ReportCommand(string commandId, string status, string message)
       "POST",
       Url("/api/v1/commands/result"),
       body,
-      response
+      response,
+      EaToken
    );
 }
 
