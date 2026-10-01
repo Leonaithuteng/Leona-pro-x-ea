@@ -279,6 +279,14 @@ def create_command(request: CommandRequest, user: User = Depends(get_current_use
             device = db.scalar(select(Device).where(Device.user_id == user.id).order_by(desc(Device.id)))
         if device is None:
             raise HTTPException(status_code=404, detail="No trading device registered")
+        if request.command == "SET_INSTRUMENT":
+            requested_broker = str(request.payload.get("broker", "")).strip().lower()
+            device_broker = str(device.broker or "").strip().lower()
+            if device_broker and requested_broker != device_broker:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Selected MT5 device is registered with {device.broker}, not {request.payload.get('broker')}"
+                )
         command = Command(command_id=secrets.token_hex(12), device_id=device.device_id,
                           command=request.command, payload=request.payload, status="QUEUED")
         db.add(command)
