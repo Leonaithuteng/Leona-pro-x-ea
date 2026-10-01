@@ -137,6 +137,50 @@ def list_devices(user: User = Depends(get_current_user)):
                            "balance": d.balance, "equity": d.equity, "profit": d.profit, "drawdown": d.drawdown,
                            "ea_active": d.ea_active} for d in rows]}
 
+@app.get("/api/v1/devices/{device_id}/settings")
+def get_device_settings(device_id: str, user: User = Depends(get_current_user)):
+    with SessionLocal() as db:
+        device = db.scalar(select(Device).where(Device.device_id == device_id, Device.user_id == user.id))
+        if device is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        return {
+            "device_id": device.device_id,
+            "risk_percent": device.risk_percent,
+            "sl_points": device.sl_points,
+            "tp_points": device.tp_points,
+            "max_daily_loss": device.max_daily_loss,
+            "max_drawdown": device.max_drawdown,
+        }
+
+@app.put("/api/v1/devices/{device_id}/settings")
+def update_device_settings(device_id: str, settings: RiskSettings, user: User = Depends(get_current_user)):
+    with SessionLocal() as db:
+        device = db.scalar(select(Device).where(Device.device_id == device_id, Device.user_id == user.id))
+        if device is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        device.risk_percent = settings.risk_percent
+        device.sl_points = settings.sl_points
+        device.tp_points = settings.tp_points
+        device.max_daily_loss = settings.max_daily_loss
+        device.max_drawdown = settings.max_drawdown
+        command = Command(
+            command_id=secrets.token_hex(12),
+            device_id=device.device_id,
+            command="UPDATE_RISK",
+            payload=settings.model_dump(),
+            status="QUEUED",
+        )
+        db.add(command)
+        db.add(Activity(
+            event_type="RISK_SETTINGS_UPDATED",
+            device_id=device.device_id,
+            command_id=command.command_id,
+            status="QUEUED",
+            message="Trading risk settings updated",
+        ))
+        db.commit()
+        return {"status": "QUEUED", "command_id": command.command_id, "device_id": device.device_id}
+
 @app.get("/api/v1/ea/status")
 def ea_status(user: User = Depends(get_current_user)):
     with SessionLocal() as db:
