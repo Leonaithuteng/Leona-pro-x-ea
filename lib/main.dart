@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'device_settings.dart';
+import 'device_setup.dart';
 
 const String apiBaseUrl = 'https://leona-pro-x-api.onrender.com';
 
@@ -84,12 +85,15 @@ class _DashboardPageState extends State<DashboardPage> {
 
   String connectionMessage = 'Connecting...';
   String lastAction = 'None';
+  List<dynamic> devices = [];
+  String? selectedDeviceId;
 
   Timer? refreshTimer;
 
   @override
   void initState() {
     super.initState();
+    loadDevices();
     loadStatus();
 
     refreshTimer = Timer.periodic(
@@ -105,6 +109,24 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Map<String,String> get headers => {'Content-Type':'application/json','Authorization':'Bearer ${widget.token}'};
+
+  Future<void> loadDevices() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$apiBaseUrl/api/v1/devices'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return;
+      final data = jsonDecode(response.body);
+      if (!mounted) return;
+      setState(() {
+        devices = data['items'] ?? [];
+        if (selectedDeviceId == null && devices.isNotEmpty) {
+          selectedDeviceId = devices.first['device_id']?.toString();
+        }
+      });
+    } catch (_) {}
+  }
 
   Future<void> loadStatus() async {
     try {
@@ -127,6 +149,10 @@ class _DashboardPageState extends State<DashboardPage> {
           equity = _number(data['equity']);
           profit = _number(data['profit']);
           drawdown = _number(data['drawdown']);
+
+          if (selectedDeviceId == null && data['device_id'] != null) {
+            selectedDeviceId = data['device_id'].toString();
+          }
 
           robotActive =
               data['ea_active'] == true ||
@@ -154,6 +180,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> sendCommand(String command) async {
     if (commandLoading) return;
+    if (selectedDeviceId == null) {
+      showMessage('Register and select an MT5 device first.');
+      return;
+    }
 
     setState(() {
       commandLoading = true;
@@ -166,6 +196,7 @@ class _DashboardPageState extends State<DashboardPage> {
             headers: headers,
             body: jsonEncode({
               'command': command,
+              'device_id': selectedDeviceId,
               'payload': {},
             }),
           )
@@ -369,6 +400,36 @@ class _DashboardPageState extends State<DashboardPage> {
 
             const SizedBox(height: 16),
 
+            if (devices.isNotEmpty)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: DropdownButtonFormField<String>(
+                    value: selectedDeviceId,
+                    decoration: const InputDecoration(
+                      labelText: 'ACTIVE MT5 DEVICE',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: devices.map<DropdownMenuItem<String>>((d) {
+                      return DropdownMenuItem<String>(
+                        value: d['device_id']?.toString(),
+                        child: Text(
+                          (d['device_name']?.toString() ?? 'MT5') +
+                          ' • ' +
+                          (d['status']?.toString() ?? 'UNKNOWN'),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) async {
+                      setState(() => selectedDeviceId = value);
+                      await loadStatus();
+                    },
+                  ),
+                ),
+              ),
+
+            if (devices.isNotEmpty) const SizedBox(height: 16),
+
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(18),
@@ -535,6 +596,21 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
 
             const SizedBox(height: 20),
+
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => DeviceSetupPage(token: widget.token),
+                  ),
+                ).then((_) => loadDevices()),
+                icon: const Icon(Icons.link),
+                label: const Text('MT5 DEVICE SETUP & EA TOKEN'),
+              ),
+            ),
+
+            const SizedBox(height: 10),
 
             SizedBox(
               width: double.infinity,
