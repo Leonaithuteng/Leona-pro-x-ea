@@ -50,6 +50,10 @@ input bool RequireSupportedBroker = true;
 input string AllowedBrokers = "weltrade,deriv";
 input bool SyntheticOnly = true;
 input bool DebugTrading = true;
+input int MaxOpenPositions = 1;
+input double MinMarginLevel = 300.0;
+input double MaxLotPercentOfBalance = 5.0;
+input int MaxSlippagePoints = 20;
 
 CTrade trade;
 CAccountInfo accountInfo;
@@ -329,6 +333,15 @@ bool RiskManagementOK()
 
    if(consecutiveLosses>=MaxConsecutiveLosses) return false;
    if(UseEquityProtection && equity<AccountInfoDouble(ACCOUNT_BALANCE)*0.95) return false;
+   double marginLevel=AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
+   if(marginLevel>0 && marginLevel<MinMarginLevel) return false;
+   int openCount=0;
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong ticket=PositionGetTicket(i);
+      if(ticket>0 && PositionSelectByTicket(ticket) && PositionGetInteger(POSITION_MAGIC)==123456) openCount++;
+   }
+   if(openCount>=MaxOpenPositions) return false;
 
    MqlDateTime t; TimeToStruct(TimeCurrent(),t);
    if(currentHour!=t.hour) { currentHour=t.hour; tradesThisHour=0; }
@@ -417,6 +430,9 @@ double CalculateLotSize()
    if(!useRiskSizingLive)
    {
       double lot=MathMax(minLot,MathMin(maxLot,lotSizeLive));
+      double maxLotByBalance=AccountInfoDouble(ACCOUNT_BALANCE)*MaxLotPercentOfBalance/100.0;
+      if(maxLotByBalance>0) lot=MathMin(lot,maxLotByBalance);
+      lot=MathMax(minLot,lot);
       lot=MathFloor(lot/step)*step;
       return NormalizeDouble(lot,2);
    }
@@ -429,6 +445,9 @@ double CalculateLotSize()
    double valuePerPoint=tickValue*_Point/tickSize;
    double lot=riskMoney/(slPointsLive*valuePerPoint);
    lot=MathMax(minLot,MathMin(maxLot,lot));
+   double maxLotByBalance=AccountInfoDouble(ACCOUNT_BALANCE)*MaxLotPercentOfBalance/100.0;
+   if(maxLotByBalance>0) lot=MathMin(lot,maxLotByBalance);
+   lot=MathMax(minLot,lot);
    if(step>0) lot=MathFloor(lot/step)*step;
    return NormalizeDouble(lot,2);
 }
@@ -495,6 +514,7 @@ int OnInit()
 {
    trade.SetExpertMagicNumber(123456);
    trade.SetTypeFillingBySymbol(_Symbol);
+   trade.SetDeviationInPoints(MaxSlippagePoints);
    handleMA=iMA(_Symbol,PERIOD_M5,20,0,MODE_SMA,PRICE_CLOSE);
    handleRSI=iRSI(_Symbol,PERIOD_M5,14,PRICE_CLOSE);
    handleADX=iADX(_Symbol,PERIOD_M5,14);
