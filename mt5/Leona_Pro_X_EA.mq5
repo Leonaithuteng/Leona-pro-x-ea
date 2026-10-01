@@ -89,6 +89,11 @@ int tpPointsLive = 250;
 double maxDailyLossLive = 3.0;
 double maxDrawdownLive = 10.0;
 
+string LearningKey(){ return "LeonaPX_Learn_"+IntegerToString((int)ChartID()); }
+
+void LoadLearningState(){ string k=LearningKey(); if(GlobalVariableCheck(k)) adaptiveThreshold=GlobalVariableGet(k); adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,adaptiveThreshold)); }
+void SaveLearningState(){ GlobalVariableSet(LearningKey(),adaptiveThreshold); }
+
 string Url(string path) { return ApiBaseUrl + path; }
 
 bool HttpRequest(string method,string url,string body,string &response,string token="")
@@ -205,6 +210,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
       if(winRate<0.40) adaptiveThreshold=MathMin(AdaptiveThresholdMax,adaptiveThreshold+LearningStep);
       else if(winRate>0.60) adaptiveThreshold=MathMax(AdaptiveThresholdMin,adaptiveThreshold-LearningStep);
       learningTrades=0; learningWins=0; learningLosses=0; learningNetProfit=0.0;
+      SaveLearningState();
       Print("Leona Learning: adjusted entry threshold to ",DoubleToString(adaptiveThreshold,2));
    }
    Print("Leona: closed trade P/L=",DoubleToString(pnl,2)," consecutive losses=",consecutiveLosses);
@@ -601,6 +607,7 @@ int OnInit()
    maxDrawdownLive=MaxDrawdown;
    remoteTradingEnabled=EA_Active;
    adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,(double)AIScoreThreshold));
+   LoadLearningState();
    EventSetTimer(MathMax(1,RemotePollSeconds));
    Print("Leona Pro X initialized. DeviceId set=",DeviceId!=""," Token set=",EaToken!=""," Timer=",MathMax(1,RemotePollSeconds),"s");
    return INIT_SUCCEEDED;
