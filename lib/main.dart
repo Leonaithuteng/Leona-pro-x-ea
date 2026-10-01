@@ -316,9 +316,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget instrumentSelector() {
     final symbols = syntheticSymbols[selectedBroker] ?? const <String>[];
-    if (!symbols.contains(selectedSymbol)) {
-      selectedSymbol = symbols.isNotEmpty ? symbols.first : '';
-    }
+    final displayedSymbol = symbols.contains(selectedSymbol)
+        ? selectedSymbol
+        : (symbols.isNotEmpty ? symbols.first : '');
 
     return Card(
       child: Padding(
@@ -366,7 +366,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: selectedSymbol,
+              value: displayedSymbol.isEmpty ? null : displayedSymbol,
               decoration: const InputDecoration(
                 labelText: 'VOLATILITY INDEX',
                 border: OutlineInputBorder(),
