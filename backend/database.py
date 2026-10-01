@@ -39,6 +39,8 @@ class Device(Base):
     drawdown: Mapped[float | None] = mapped_column(Float, nullable=True)
     ea_active: Mapped[bool] = mapped_column(Boolean, default=False)
     risk_percent: Mapped[float] = mapped_column(Float, default=1.0)
+    lot_size: Mapped[float] = mapped_column(Float, default=0.01)
+    sizing_mode: Mapped[str] = mapped_column(String(20), default="RISK")
     sl_points: Mapped[int] = mapped_column(Integer, default=150)
     tp_points: Mapped[int] = mapped_column(Integer, default=250)
     max_daily_loss: Mapped[float] = mapped_column(Float, default=3.0)
@@ -82,6 +84,8 @@ def migrate_device_columns():
     existing = {col["name"] for col in inspector.get_columns("devices")}
     additions = [
         ("risk_percent", "FLOAT DEFAULT 1.0"),
+        ("lot_size", "FLOAT DEFAULT 0.01"),
+        ("sizing_mode", "VARCHAR(20) DEFAULT 'RISK'"),
         ("sl_points", "INTEGER DEFAULT 150"),
         ("tp_points", "INTEGER DEFAULT 250"),
         ("max_daily_loss", "FLOAT DEFAULT 3.0"),
