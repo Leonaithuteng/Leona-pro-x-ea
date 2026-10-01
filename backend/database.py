@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, create_engine
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./leona_pro_x.db")
@@ -71,3 +71,23 @@ class Activity(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    migrate_device_columns()
+
+
+def migrate_device_columns():
+    """Add risk columns to older deployments without destroying existing data."""
+    inspector = inspect(engine)
+    if "devices" not in inspector.get_table_names():
+        return
+    existing = {col["name"] for col in inspector.get_columns("devices")}
+    additions = [
+        ("risk_percent", "FLOAT DEFAULT 1.0"),
+        ("sl_points", "INTEGER DEFAULT 150"),
+        ("tp_points", "INTEGER DEFAULT 250"),
+        ("max_daily_loss", "FLOAT DEFAULT 3.0"),
+        ("max_drawdown", "FLOAT DEFAULT 10.0"),
+    ]
+    with engine.begin() as conn:
+        for name, definition in additions:
+            if name not in existing:
+                conn.execute(text("ALTER TABLE devices ADD COLUMN " + name + " " + definition))
