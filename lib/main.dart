@@ -151,7 +151,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> loadStatus() async {
     try {
       final response = await http.get(
-        Uri.parse('$apiBaseUrl/api/v1/ea/status'),
+        Uri.parse('$apiBaseUrl/api/v1/ea/status${selectedDeviceId == null ? '' : '?device_id=$selectedDeviceId'}'),
         headers: headers,
       ).timeout(const Duration(seconds: 10));
 
@@ -161,9 +161,9 @@ class _DashboardPageState extends State<DashboardPage> {
         if (!mounted) return;
 
         setState(() {
-          connected = true;
+          connected = data['connected'] == true;
           loading = false;
-          connectionMessage = 'Connected';
+          connectionMessage = connected ? 'MT5 EA online' : 'Waiting for MT5 EA';
 
           balance = _number(data['balance']);
           equity = _number(data['equity']);
@@ -174,10 +174,7 @@ class _DashboardPageState extends State<DashboardPage> {
             selectedDeviceId = data['device_id'].toString();
           }
 
-          robotActive =
-              data['ea_active'] == true ||
-              data['robot_active'] == true ||
-              data['active'] == true;
+          robotActive = data['ea_active'] == true;
         });
       } else {
         throw Exception('API returned ${response.statusCode}');
@@ -227,17 +224,15 @@ class _DashboardPageState extends State<DashboardPage> {
 
         setState(() {
           if (command == 'START_ROBOT') {
-            robotActive = true;
-            lastAction = 'Robot start command sent';
+            lastAction = 'Start command queued for MT5 EA';
           } else if (command == 'STOP_ROBOT') {
-            robotActive = false;
-            lastAction = 'Robot stop command sent';
+            lastAction = 'Stop command queued for MT5 EA';
           } else if (command == 'CLOSE_ALL') {
-            lastAction = 'Close-all command sent';
+            lastAction = 'Close-all command queued for MT5 EA';
           }
         });
 
-        showMessage('Command sent successfully');
+        showMessage(connected ? 'Command sent to MT5 EA' : 'Command queued — MT5 EA is offline');
         await loadStatus();
       } else {
         throw Exception(
