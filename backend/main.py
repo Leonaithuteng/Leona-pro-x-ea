@@ -38,6 +38,8 @@ class DeviceRegister(BaseModel):
     account: Optional[str] = None
 
 class RiskSettings(BaseModel):
+    sizing_mode: str = Field(default="RISK", pattern="^(RISK|FIXED_LOT)$")
+    lot_size: float = Field(default=0.01, ge=0.001, le=100.0)
     risk_percent: float = Field(default=1.0, ge=0.01, le=10.0)
     sl_points: int = Field(default=150, ge=1, le=100000)
     tp_points: int = Field(default=250, ge=1, le=100000)
@@ -173,7 +175,7 @@ def list_devices(user: User = Depends(get_current_user)):
                            "account": d.account, "status": d.status, "last_seen": d.last_seen.isoformat() if d.last_seen else None,
                            "balance": d.balance, "equity": d.equity, "profit": d.profit, "drawdown": d.drawdown,
                            "ea_active": d.ea_active,
-                           "risk_percent": d.risk_percent, "sl_points": d.sl_points,
+                           "sizing_mode": d.sizing_mode, "lot_size": d.lot_size, "risk_percent": d.risk_percent, "sl_points": d.sl_points,
                            "tp_points": d.tp_points, "max_daily_loss": d.max_daily_loss,
                            "max_drawdown": d.max_drawdown} for d in rows]}
 
@@ -185,6 +187,8 @@ def get_device_settings(device_id: str, user: User = Depends(get_current_user)):
             raise HTTPException(status_code=404, detail="Device not found")
         return {
             "device_id": device.device_id,
+            "sizing_mode": device.sizing_mode,
+            "lot_size": device.lot_size,
             "risk_percent": device.risk_percent,
             "sl_points": device.sl_points,
             "tp_points": device.tp_points,
@@ -198,6 +202,8 @@ def update_device_settings(device_id: str, settings: RiskSettings, user: User = 
         device = db.scalar(select(Device).where(Device.device_id == device_id, Device.user_id == user.id))
         if device is None:
             raise HTTPException(status_code=404, detail="Device not found")
+        device.sizing_mode = settings.sizing_mode
+        device.lot_size = settings.lot_size
         device.risk_percent = settings.risk_percent
         device.sl_points = settings.sl_points
         device.tp_points = settings.tp_points
