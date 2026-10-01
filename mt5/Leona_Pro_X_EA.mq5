@@ -158,8 +158,11 @@ void CloseAllPositions()
       ulong ticket=PositionGetTicket(i);
       if(ticket>0 && PositionSelectByTicket(ticket))
       {
+         long magic=PositionGetInteger(POSITION_MAGIC);
+         string symbol=PositionGetString(POSITION_SYMBOL);
+         if(magic!=123456) continue;
          if(!trade.PositionClose(ticket))
-            Print("Leona: failed to close ticket ",ticket," retcode=",trade.ResultRetcode());
+            Print("Leona: failed to close EA ticket ",ticket," symbol=",symbol," retcode=",trade.ResultRetcode());
       }
    }
 }
