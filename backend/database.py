@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, Float, Integer, JSON, String, create_engine
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./leona_pro_x.db")
@@ -13,9 +13,19 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class Device(Base):
     __tablename__ = "devices"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     device_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     device_name: Mapped[str] = mapped_column(String(100))
     broker: Mapped[str] = mapped_column(String(100), default="Weltrade")
