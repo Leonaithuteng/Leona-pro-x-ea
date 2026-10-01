@@ -494,42 +494,12 @@ void ResetDaily()
 
 bool RiskManagementOK()
 {
-   ResetDaily();
-   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
-   if(startingBalance<=0) startingBalance=AccountInfoDouble(ACCOUNT_BALANCE);
-
-   double dailyPL=(equity-startingBalance)/startingBalance*100.0;
-   if(dailyPL<=-maxDailyLossLive) return false;
-
-   if(equity>equityPeak) equityPeak=equity;
-   if(equityPeak>0 && (equityPeak-equity)/equityPeak*100.0>=maxDrawdownLive) return false;
-
-   if(consecutiveLosses>=MaxConsecutiveLosses) return false;
-   if(UseEquityProtection && equity<AccountInfoDouble(ACCOUNT_BALANCE)*0.95) return false;
-   double marginLevel=AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-   if(marginLevel>0 && marginLevel<MinMarginLevel) return false;
-   int openCount=0;
-   double basketProfit=0.0;
-   for(int i=PositionsTotal()-1;i>=0;i--)
-   {
-      ulong ticket=PositionGetTicket(i);
-      if(ticket>0 && PositionSelectByTicket(ticket) && PositionGetInteger(POSITION_MAGIC)==123456)
-      {
-         openCount++;
-         basketProfit += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-      }
-   }
-   double balance=AccountInfoDouble(ACCOUNT_BALANCE);
-   if(balance<MinimumAccountBalance) return false;
-   bool scalingProfit=basketProfit>=ProfitRequiredToScale;
-   int profitScaledLimit=scalingProfit ? MathMax(MinimumProfitScalePositions,MaxOpenPositions) : MathMin(MaxOpenPositions,MathMax(1,MinimumProfitScalePositions));
-   if(openCount>=profitScaledLimit) return false;
-
-   MqlDateTime t; TimeToStruct(TimeCurrent(),t);
-   if(currentHour!=t.hour) { currentHour=t.hour; tradesThisHour=0; }
-   return tradesThisHour<MaxTradesPerHour;
+   // Risk-management blocking has been intentionally disabled for the
+   // aggressive scalping build. Trading is no longer stopped by daily loss,
+   // drawdown, consecutive-loss, equity, margin, balance, position-count,
+   // or hourly-trade risk gates.
+   return true;
 }
-
 double BufferValue(int handle,int buffer,int shift)
 {
    double a[];
