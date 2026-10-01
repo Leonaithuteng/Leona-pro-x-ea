@@ -158,6 +158,10 @@ bool ApplyRiskSettings(string json)
    double v;
    bool any=false;
    if(ExtractNumber(json,"risk_percent",v) && v>=0.01 && v<=10.0) { riskPercentLive=v; any=true; }
+   if(ExtractNumber(json,"lot_size",v) && v>=0.001 && v<=100.0) { lotSizeLive=v; any=true; }
+   string sizing=ExtractString(json,"sizing_mode");
+   if(sizing=="RISK") { useRiskSizingLive=true; any=true; }
+   else if(sizing=="FIXED_LOT") { useRiskSizingLive=false; any=true; }
    if(ExtractNumber(json,"sl_points",v) && v>=1 && v<=100000) { slPointsLive=(int)v; any=true; }
    if(ExtractNumber(json,"tp_points",v) && v>=1 && v<=100000) { tpPointsLive=(int)v; any=true; }
    if(ExtractNumber(json,"max_daily_loss",v) && v>=0.1 && v<=50.0) { maxDailyLossLive=v; any=true; }
@@ -239,7 +243,7 @@ void ProcessRemoteCommands()
       else if(cmd=="UPDATE_RISK")
       {
          if(ApplyRiskSettings(response))
-            msg=StringFormat("Risk applied: %.2f%% risk, SL %d, TP %d, daily loss %.2f%%, drawdown %.2f%%",riskPercentLive,slPointsLive,tpPointsLive,maxDailyLossLive,maxDrawdownLive);
+            msg=StringFormat("Sizing applied: %s, lot %.2f, risk %.2f%%, SL %d, TP %d, daily loss %.2f%%, drawdown %.2f%%",useRiskSizingLive?"RISK":"FIXED_LOT",lotSizeLive,riskPercentLive,slPointsLive,tpPointsLive,maxDailyLossLive,maxDrawdownLive);
          else { ok=false; msg="Invalid or missing risk settings"; }
       }
       else { ok=false; msg="Unsupported command"; }
@@ -404,6 +408,18 @@ bool MultiTimeframeConfirm(bool buy)
 
 double CalculateLotSize()
 {
+   double minLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
+   double maxLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX);
+   double step=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
+   if(minLot<=0) minLot=0.01;
+   if(maxLot<=0) maxLot=100.0;
+   if(step<=0) step=minLot;
+   if(!useRiskSizingLive)
+   {
+      double lot=MathMax(minLot,MathMin(maxLot,lotSizeLive));
+      lot=MathFloor(lot/step)*step;
+      return NormalizeDouble(lot,2);
+   }
    if(riskPercentLive<=0) return MathMax(LotSize,SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN));
    double balance=AccountInfoDouble(ACCOUNT_BALANCE);
    double riskMoney=balance*riskPercentLive/100.0;
@@ -412,9 +428,6 @@ double CalculateLotSize()
    if(tickValue<=0 || tickSize<=0 || slPointsLive<=0) return LotSize;
    double valuePerPoint=tickValue*_Point/tickSize;
    double lot=riskMoney/(slPointsLive*valuePerPoint);
-   double minLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
-   double maxLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX);
-   double step=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
    lot=MathMax(minLot,MathMin(maxLot,lot));
    if(step>0) lot=MathFloor(lot/step)*step;
    return NormalizeDouble(lot,2);
