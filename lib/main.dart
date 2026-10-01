@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'device_settings.dart';
 
 const String apiBaseUrl = 'https://leona-pro-x-api.onrender.com';
 
@@ -535,27 +536,16 @@ class _DashboardPageState extends State<DashboardPage> {
 
             const SizedBox(height: 20),
 
-            Card(
-              child: const Padding(
-                padding: EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'RISK SETTINGS',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: 12),
-                    Text('Risk per trade: 1.0%'),
-                    Text('Stop Loss: 150 points'),
-                    Text('Take Profit: 250 points'),
-                    Text('Max Daily Loss: 3.0%'),
-                    Text('Max Drawdown: 10.0%'),
-                  ],
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => DeviceSettingsPage(token: widget.token),
+                  ),
                 ),
+                icon: const Icon(Icons.settings),
+                label: const Text('MT5 DEVICE & RISK SETTINGS'),
               ),
             ),
 
