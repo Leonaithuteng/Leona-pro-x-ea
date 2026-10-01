@@ -60,6 +60,8 @@ class Heartbeat(BaseModel):
     profit: Optional[float] = None
     drawdown: Optional[float] = None
     ea_active: bool = False
+    broker: Optional[str] = None
+    symbol: Optional[str] = None
 
 def create_token(username: str) -> str:
     expires = datetime.now(timezone.utc) + timedelta(hours=12)
@@ -259,9 +261,16 @@ def heartbeat(heartbeat_data: Heartbeat, x_ea_token: Optional[str] = Header(defa
 
 @app.post("/api/v1/ea/command")
 def create_command(request: CommandRequest, user: User = Depends(get_current_user)):
-    allowed = {"START_ROBOT", "STOP_ROBOT", "CLOSE_ALL", "UPDATE_RISK"}
+    allowed = {"START_ROBOT", "STOP_ROBOT", "CLOSE_ALL", "UPDATE_RISK", "SET_INSTRUMENT"}
     if request.command not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported command")
+    if request.command == "SET_INSTRUMENT":
+        broker = str(request.payload.get("broker", "")).strip()
+        symbol = str(request.payload.get("symbol", "")).strip()
+        if broker.lower() not in {"weltrade", "deriv"}:
+            raise HTTPException(status_code=400, detail="Unsupported synthetic broker")
+        if not symbol or len(symbol) > 100:
+            raise HTTPException(status_code=400, detail="Invalid synthetic symbol")
     with SessionLocal() as db:
         device = None
         if request.device_id:
