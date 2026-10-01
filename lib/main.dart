@@ -322,10 +322,17 @@ class _DashboardPageState extends State<DashboardPage> {
         showMessage('Switch queued — MT5 will move to $symbol');
         await loadStatus();
       } else {
-        throw Exception('HTTP ${response.statusCode}');
+        String detail = '';
+        try {
+          final body = jsonDecode(response.body);
+          detail = body['detail']?.toString() ?? '';
+        } catch (_) {}
+        throw Exception(detail.isNotEmpty ? detail : 'HTTP ${response.statusCode}');
       }
-    } catch (_) {
-      showMessage('Could not queue instrument switch.');
+    } catch (e) {
+      showMessage(
+        e.toString().replaceFirst('Exception: ', ''),
+      );
     } finally {
       if (mounted) setState(() => instrumentLoading = false);
     }
@@ -375,10 +382,20 @@ class _DashboardPageState extends State<DashboardPage> {
               onChanged: instrumentLoading ? null : (broker) {
                 if (broker == null) return;
                 final first = syntheticSymbols[broker]!.first;
+                final matching = devices.where((d) {
+                  final db = d['broker']?.toString().toLowerCase();
+                  return db == broker.toLowerCase();
+                }).toList();
                 setState(() {
                   selectedBroker = broker;
                   selectedSymbol = first;
+                  if (matching.isNotEmpty) {
+                    selectedDeviceId = matching.first['device_id']?.toString();
+                  }
                 });
+                if (matching.isEmpty) {
+                  showMessage('No $broker MT5 device registered. Register one first.'); 
+                }
               },
             ),
             const SizedBox(height: 12),
