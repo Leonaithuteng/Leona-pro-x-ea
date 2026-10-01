@@ -50,6 +50,7 @@ input bool RequireSupportedBroker = true;
 input string AllowedBrokers = "weltrade,deriv";
 input bool SyntheticOnly = true;
 input bool DebugTrading = true;
+input bool AggressiveScalping = true;
 input int MaxOpenPositions = 100;
 input double MinimumAccountBalance = 2.0;
 input int MinimumProfitScalePositions = 5;
@@ -68,6 +69,11 @@ int learningWins=0;
 int learningLosses=0;
 double learningNetProfit=0.0;
 double adaptiveThreshold=6.0;
+string diagnosticBlocker="STARTING";
+int diagnosticScore=0;
+double diagnosticADX=0.0;
+bool apiHeartbeatOK=false;
+datetime lastHeartbeatTime=0;
 input bool EnableAdaptiveLearning = true;
 input int LearningWindowTrades = 30;
 input double AdaptiveThresholdMin = 4.0;
@@ -105,6 +111,44 @@ void SaveLearningState(){ GlobalVariableSet(LearningKey(),adaptiveThreshold); }
 
 string Url(string path) { return ApiBaseUrl + path; }
 
+int CountLeonaPositions()
+{
+   int count=0;
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong ticket=PositionGetTicket(i);
+      if(ticket>0 && PositionSelectByTicket(ticket) &&
+         PositionGetInteger(POSITION_MAGIC)==123456)
+         count++;
+   }
+   return count;
+}
+
+void UpdateChartStatus()
+{
+   double balance=AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
+   double marginLevel=AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
+   string company=AccountInfoString(ACCOUNT_COMPANY);
+   string apiState=apiHeartbeatOK ? "CONNECTED" : "WAITING";
+   string runState=(!EA_Active || !remoteTradingEnabled || isTradingPaused) ? "PAUSED" : "ACTIVE";
+   int threshold=(int)MathRound(EnableAdaptiveLearning ? adaptiveThreshold : (double)AIScoreThreshold);
+   if(AggressiveScalping) threshold=MathMax(1,threshold-1);
+
+   Comment(
+      "LEONA PRO X EA\n",
+      "MODE: ",AggressiveScalping ? "AGGRESSIVE SCALPER" : "STANDARD SCALPER","\n",
+      "STATUS: ",runState,"\n",
+      "BROKER: ",company,"\n",
+      "SYMBOL: ",_Symbol," | M5\n",
+      "API: ",apiState," | HEARTBEAT: ",apiHeartbeatOK ? "OK" : "WAITING","\n",
+      "AI SCORE: ",diagnosticScore," | THRESHOLD: ",threshold," | ADX: ",DoubleToString(diagnosticADX,1),"\n",
+      "POSITIONS: ",CountLeonaPositions(),"/",MaxOpenPositions," | MARGIN LEVEL: ",DoubleToString(marginLevel,1),"%\n",
+      "BALANCE: ",DoubleToString(balance,2)," | EQUITY: ",DoubleToString(equity,2),"\n",
+      "BLOCKER: ",diagnosticBlocker
+   );
+}
+
 bool HttpRequest(string method,string url,string body,string &response,string token="")
 {
    char data[], result[];
@@ -137,8 +181,17 @@ void SendHeartbeat()
       bal,eq,pl,dd,(EA_Active && remoteTradingEnabled && !isTradingPaused)?"true":"false",broker,symbol);
    string response;
    bool ok=HttpRequest("POST",Url("/api/v1/ea/heartbeat"),body,response,EaToken);
-   if(ok) Print("Leona heartbeat accepted by API");
-   else Print("Leona heartbeat failed");
+   if(ok)
+   {
+      apiHeartbeatOK=true;
+      lastHeartbeatTime=TimeCurrent();
+      Print("Leona heartbeat accepted by API");
+   }
+   else
+   {
+      apiHeartbeatOK=false;
+      Print("Leona heartbeat failed");
+   }
 }
 
 void ReportCommand(string id,string status,string message)
@@ -567,29 +620,37 @@ void OpenSell()
 
 void ManagePositions()
 {
-   if(!PositionSelect(_Symbol)) return;
-   if((long)PositionGetInteger(POSITION_MAGIC)!=123456) return;
-
-   long type=PositionGetInteger(POSITION_TYPE);
-   double open=PositionGetDouble(POSITION_PRICE_OPEN);
-   double sl=PositionGetDouble(POSITION_SL);
-   double tp=PositionGetDouble(POSITION_TP);
-   double price=type==POSITION_TYPE_BUY?SymbolInfoDouble(_Symbol,SYMBOL_BID):SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   double profitPoints=(type==POSITION_TYPE_BUY?(price-open):(open-price))/_Point;
-
-   if(UseBreakEven && profitPoints>=BreakEvenTrigger)
+   for(int i=PositionsTotal()-1;i>=0;i--)
    {
-      double newSL=NormalizeDouble(open,_Digits);
-      if((type==POSITION_TYPE_BUY && (sl<newSL || sl==0)) || (type==POSITION_TYPE_SELL && (sl>newSL || sl==0)))
-         trade.PositionModify(_Symbol,newSL,tp);
-   }
+      ulong ticket=PositionGetTicket(i);
+      if(ticket==0 || !PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC)!=123456) continue;
+      string symbol=PositionGetString(POSITION_SYMBOL);
+      if(symbol!=_Symbol) continue;
 
-   if(UseTrailingStop && profitPoints>=TrailingStart)
-   {
-      double newSL=type==POSITION_TYPE_BUY?price-TrailingStep*_Point:price+TrailingStep*_Point;
-      newSL=NormalizeDouble(newSL,_Digits);
-      if((type==POSITION_TYPE_BUY && newSL>sl) || (type==POSITION_TYPE_SELL && (newSL<sl || sl==0)))
-         trade.PositionModify(_Symbol,newSL,tp);
+      long type=PositionGetInteger(POSITION_TYPE);
+      double open=PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl=PositionGetDouble(POSITION_SL);
+      double tp=PositionGetDouble(POSITION_TP);
+      double price=type==POSITION_TYPE_BUY?SymbolInfoDouble(symbol,SYMBOL_BID):SymbolInfoDouble(symbol,SYMBOL_ASK);
+      double point=SymbolInfoDouble(symbol,SYMBOL_POINT);
+      if(point<=0) point=_Point;
+      double profitPoints=(type==POSITION_TYPE_BUY?(price-open):(open-price))/point;
+
+      if(UseBreakEven && profitPoints>=BreakEvenTrigger)
+      {
+         double newSL=NormalizeDouble(open,(int)SymbolInfoInteger(symbol,SYMBOL_DIGITS));
+         if((type==POSITION_TYPE_BUY && (sl<newSL || sl==0)) || (type==POSITION_TYPE_SELL && (sl>newSL || sl==0)))
+            trade.PositionModify(ticket,newSL,tp);
+      }
+
+      if(UseTrailingStop && profitPoints>=TrailingStart)
+      {
+         double newSL=type==POSITION_TYPE_BUY?price-TrailingStep*point:price+TrailingStep*point;
+         newSL=NormalizeDouble(newSL,(int)SymbolInfoInteger(symbol,SYMBOL_DIGITS));
+         if((type==POSITION_TYPE_BUY && newSL>sl) || (type==POSITION_TYPE_SELL && (newSL<sl || sl==0)))
+            trade.PositionModify(ticket,newSL,tp);
+      }
    }
 }
 
@@ -618,12 +679,15 @@ int OnInit()
    adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,(double)AIScoreThreshold));
    LoadLearningState();
    EventSetTimer(MathMax(1,RemotePollSeconds));
+   diagnosticBlocker="INITIALIZED - WAITING FOR MARKET";
+   UpdateChartStatus();
    Print("Leona Pro X initialized. DeviceId set=",DeviceId!=""," Token set=",EaToken!=""," Timer=",MathMax(1,RemotePollSeconds),"s");
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
+   Comment("");
    EventKillTimer();
    IndicatorRelease(handleMA); IndicatorRelease(handleRSI); IndicatorRelease(handleADX);
    IndicatorRelease(handleATR); IndicatorRelease(handleMACD);
@@ -633,29 +697,109 @@ void OnTimer()
 {
    SendHeartbeat();
    ProcessRemoteCommands();
+   UpdateChartStatus();
 }
 
 void OnTick()
 {
    ManagePositions();
-   if(!EA_Active || !remoteTradingEnabled || isTradingPaused) return;
-   if(!BrokerAndSymbolOK()) { if(DebugTrading) Print("Leona DEBUG: blocked by broker/symbol filter. Company=",AccountInfoString(ACCOUNT_COMPANY)," Symbol=",_Symbol); return; }
+
+   diagnosticScore=0;
+   diagnosticADX=0.0;
+
+   if(!EA_Active || !remoteTradingEnabled || isTradingPaused)
+   {
+      diagnosticBlocker="ROBOT PAUSED";
+      UpdateChartStatus();
+      return;
+   }
+
+   if(!BrokerAndSymbolOK())
+   {
+      diagnosticBlocker="BROKER/SYMBOL FILTER";
+      if(DebugTrading) Print("Leona DEBUG: blocked by broker/symbol filter. Company=",AccountInfoString(ACCOUNT_COMPANY)," Symbol=",_Symbol);
+      UpdateChartStatus();
+      return;
+   }
+
    long spread=SymbolInfoInteger(_Symbol,SYMBOL_SPREAD);
-   if(spread>MaxSpread) { if(DebugTrading) Print("Leona DEBUG: blocked by spread. spread=",spread," max=",MaxSpread); return; }
-   if(!TimeOK()) { if(DebugTrading) Print("Leona DEBUG: blocked by trading hours."); return; }
-   if(!RiskManagementOK()) { if(DebugTrading) Print("Leona DEBUG: blocked by risk management."); return; }
-   if(!VolatilityOK()) { if(DebugTrading) Print("Leona DEBUG: blocked by volatility. ATR points outside ",MinVolatility,"-",MaxVolatility); return; }
-   if(TimeCurrent()-lastTradeTime<CooldownSeconds) return;
+   if(spread>MaxSpread)
+   {
+      diagnosticBlocker="SPREAD TOO HIGH";
+      if(DebugTrading) Print("Leona DEBUG: blocked by spread. spread=",spread," max=",MaxSpread);
+      UpdateChartStatus();
+      return;
+   }
+
+   if(!TimeOK())
+   {
+      diagnosticBlocker="OUTSIDE TRADING HOURS";
+      if(DebugTrading) Print("Leona DEBUG: blocked by trading hours.");
+      UpdateChartStatus();
+      return;
+   }
+
+   if(!RiskManagementOK())
+   {
+      diagnosticBlocker="RISK/MARGIN PROTECTION";
+      if(DebugTrading) Print("Leona DEBUG: blocked by risk management.");
+      UpdateChartStatus();
+      return;
+   }
+
+   if(!VolatilityOK())
+   {
+      diagnosticBlocker="VOLATILITY FILTER";
+      if(DebugTrading) Print("Leona DEBUG: blocked by volatility. ATR points outside ",MinVolatility,"-",MaxVolatility);
+      UpdateChartStatus();
+      return;
+   }
+
+   if(TimeCurrent()-lastTradeTime<CooldownSeconds)
+   {
+      diagnosticBlocker="COOLDOWN";
+      UpdateChartStatus();
+      return;
+   }
 
    double adx=BufferValue(handleADX,0,0);
-   if(adx==EMPTY_VALUE || adx<MinTrendStrength*10.0) { if(DebugTrading) Print("Leona DEBUG: blocked by ADX. ADX=",adx," minimum=",MinTrendStrength*10.0); return; }
+   diagnosticADX=adx;
+   if(adx==EMPTY_VALUE || adx<MinTrendStrength*10.0)
+   {
+      diagnosticBlocker="ADX FILTER";
+      if(DebugTrading) Print("Leona DEBUG: blocked by ADX. ADX=",adx," minimum=",MinTrendStrength*10.0);
+      UpdateChartStatus();
+      return;
+   }
 
    int score=AIScore();
+   diagnosticScore=score;
    int threshold=(int)MathRound(EnableAdaptiveLearning ? adaptiveThreshold : (double)AIScoreThreshold);
+   if(AggressiveScalping) threshold=MathMax(1,threshold-1);
+
    bool buyConfirm=MultiTimeframeConfirm(true);
    bool sellConfirm=MultiTimeframeConfirm(false);
-   if(DebugTrading && (score>=threshold || score<=-threshold)) Print("Leona DEBUG: score=",score," threshold=",threshold," ADX=",adx," buyConfirm=",buyConfirm," sellConfirm=",sellConfirm);
 
-   if(score>=threshold && buyConfirm) OpenBuy();
-   else if(score<=-threshold && sellConfirm) OpenSell();
+   if(score>=threshold && buyConfirm)
+   {
+      diagnosticBlocker="BUY SIGNAL - SENDING";
+      if(DebugTrading) Print("Leona DEBUG: BUY signal score=",score," threshold=",threshold," ADX=",adx);
+      OpenBuy();
+   }
+   else if(score<=-threshold && sellConfirm)
+   {
+      diagnosticBlocker="SELL SIGNAL - SENDING";
+      if(DebugTrading) Print("Leona DEBUG: SELL signal score=",score," threshold=",threshold," ADX=",adx);
+      OpenSell();
+   }
+   else if(score>=threshold || score<=-threshold)
+   {
+      diagnosticBlocker="AI SCORE OK - MTF CONFIRMATION";
+   }
+   else
+   {
+      diagnosticBlocker="WAITING FOR AI SCORE";
+   }
+
+   UpdateChartStatus();
 }
