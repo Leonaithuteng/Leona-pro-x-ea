@@ -9,7 +9,8 @@
 input group "Trading Parameters"
 input double LotSize = 0.01;
 input double RiskPercent = 1.0;
-input int MaxSpread = 0; // Legacy fixed-point filter disabled by default\ninput bool UseSmartSpreadFilter = true;
+input int MaxSpread = 0; // Legacy fixed-point filter disabled by default
+input bool UseSmartSpreadFilter = true;
 input double MaxSpreadATRPercent = 75.0;
 input double MaxSpreadPricePercent = 0.020;
 input bool ShowSpreadDiagnostics = true;
