@@ -116,6 +116,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
+    _loadInstrumentPrefs();
     loadDevices();
     loadStatus();
 
@@ -129,6 +130,19 @@ class _DashboardPageState extends State<DashboardPage> {
   void dispose() {
     refreshTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadInstrumentPrefs() async {
+    final p = await SharedPreferences.getInstance();
+    final broker = p.getString('selected_broker');
+    final symbol = p.getString('selected_symbol');
+    if (!mounted) return;
+    setState(() {
+      if (broker != null && syntheticSymbols.containsKey(broker)) {
+        selectedBroker = broker;
+      }
+      if (symbol != null) selectedSymbol = symbol;
+    });
   }
 
   Map<String,String> get headers => {'Content-Type':'application/json','Authorization':'Bearer ${widget.token}'};
@@ -301,6 +315,9 @@ class _DashboardPageState extends State<DashboardPage> {
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
+        final p = await SharedPreferences.getInstance();
+        await p.setString('selected_broker', broker);
+        await p.setString('selected_symbol', symbol);
         lastAction = 'Instrument switch queued: $broker • $symbol';
         showMessage('Switch queued — MT5 will move to $symbol');
         await loadStatus();
