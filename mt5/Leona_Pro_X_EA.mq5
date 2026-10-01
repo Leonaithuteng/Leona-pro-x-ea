@@ -50,9 +50,10 @@ input bool RequireSupportedBroker = true;
 input string AllowedBrokers = "weltrade,deriv";
 input bool SyntheticOnly = true;
 input bool DebugTrading = true;
-input int MaxOpenPositions = 1;
+input int MaxOpenPositions = 10;
 input double MinMarginLevel = 300.0;
 input double MaxLotPercentOfBalance = 5.0;
+input double BalancePerOpenTrade = 100.0;
 input int MaxSlippagePoints = 20;
 
 CTrade trade;
@@ -357,7 +358,9 @@ bool RiskManagementOK()
       ulong ticket=PositionGetTicket(i);
       if(ticket>0 && PositionSelectByTicket(ticket) && PositionGetInteger(POSITION_MAGIC)==123456) openCount++;
    }
-   if(openCount>=MaxOpenPositions) return false;
+   int balanceBasedMax=(int)MathFloor(AccountInfoDouble(ACCOUNT_BALANCE)/MathMax(BalancePerOpenTrade,0.01));
+   int allowedOpenTrades=MathMax(1,MathMin(MaxOpenPositions,balanceBasedMax));
+   if(openCount>=allowedOpenTrades) return false;
 
    MqlDateTime t; TimeToStruct(TimeCurrent(),t);
    if(currentHour!=t.hour) { currentHour=t.hour; tradesThisHour=0; }
