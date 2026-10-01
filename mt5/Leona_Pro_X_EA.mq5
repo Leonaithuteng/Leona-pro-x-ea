@@ -45,6 +45,8 @@ input string DeviceId = "";
 input string EaToken = "";
 input int RemotePollSeconds = 5;
 input bool EnableRemoteControl = true;
+input bool RequireWeltradeBroker = true;
+input bool SyntheticOnly = true;
 
 CTrade trade;
 CAccountInfo accountInfo;
@@ -197,6 +199,26 @@ void ProcessRemoteCommands()
       ReportCommand(id,ok?"COMPLETED":"FAILED",msg);
       pos++;
    }
+}
+
+bool BrokerAndSymbolOK()
+{
+   if(RequireWeltradeBroker)
+   {
+      string company=AccountInfoString(ACCOUNT_COMPANY);
+      if(StringFind(StringToLower(company),"weltrade")<0) return false;
+   }
+
+   if(!SyntheticOnly) return true;
+
+   string symbol=StringToLower(_Symbol);
+   bool synthetic=
+      StringFind(symbol,"vol")>=0 ||
+      StringFind(symbol,"painx")>=0 ||
+      StringFind(symbol,"gainx")>=0 ||
+      StringFind(symbol,"flipx")>=0;
+
+   return synthetic;
 }
 
 bool SpreadOK()
@@ -427,6 +449,7 @@ void OnTick()
 {
    ManagePositions();
    if(!EA_Active || !remoteTradingEnabled || isTradingPaused) return;
+   if(!BrokerAndSymbolOK()) return;
    if(!SpreadOK() || !TimeOK() || !RiskManagementOK() || !VolatilityOK()) return;
    if(TimeCurrent()-lastTradeTime<CooldownSeconds) return;
 
