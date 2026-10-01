@@ -282,9 +282,12 @@ class _DashboardPageState extends State<DashboardPage> {
       'SFX Vol 60', 'SFX Vol 70', 'SFX Vol 80', 'SFX Vol 90', 'SFX Vol 99',
     ],
     'Deriv': [
-      'Volatility 10 Index', 'Volatility 25 Index', 'Volatility 50 Index',
-      'Volatility 75 Index', 'Volatility 100 Index', 'Volatility 150 Index',
-      'Volatility 250 Index',
+      'Volatility 10 Index', 'Volatility 25 Index', 'Volatility 30 Index',
+      'Volatility 50 Index', 'Volatility 75 Index', 'Volatility 90 Index',
+      'Volatility 100 Index', 'Volatility 250 Index',
+      'Volatility 10 (1s) Index', 'Volatility 25 (1s) Index',
+      'Volatility 50 (1s) Index', 'Volatility 75 (1s) Index',
+      'Volatility 90 (1s) Index', 'Volatility 100 (1s) Index',
     ],
   };
 
