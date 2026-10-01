@@ -18,6 +18,7 @@ input group "Filters"
 input int MinVolatility = 60;
 input int MaxVolatility = 300;
 input double MinTrendStrength = 2.5;
+input int AIScoreThreshold = 6; // Minimum AI score required for an entry
 
 input group "Time & Cooldown"
 input int CooldownSeconds = 20;
@@ -463,7 +464,7 @@ void OnTick()
    if(adx==EMPTY_VALUE || adx<MinTrendStrength*10.0) return;
 
    int score=AIScore();
-   int threshold=4+(int)MathCeil(50.0/MathMax(adx/10.0,0.1));
+   int threshold=MathMax(1,AIScoreThreshold);
 
    if(score>=threshold && MultiTimeframeConfirm(true)) OpenBuy();
    else if(score<=-threshold && MultiTimeframeConfirm(false)) OpenSell();
