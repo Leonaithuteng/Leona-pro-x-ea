@@ -3,7 +3,7 @@ from typing import Optional
 import os
 import secrets
 
-from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi import FastAPI, Header, HTTPException, Depends, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from jose import jwt, JWTError
@@ -220,15 +220,20 @@ def update_device_settings(device_id: str, settings: RiskSettings, user: User = 
         return {"status": "QUEUED", "command_id": command.command_id, "device_id": device.device_id}
 
 @app.get("/api/v1/ea/status")
-def ea_status(user: User = Depends(get_current_user)):
+def ea_status(device_id: Optional[str] = Query(default=None), user: User = Depends(get_current_user)):
     with SessionLocal() as db:
-        device = db.scalar(select(Device).where(Device.user_id == user.id).order_by(desc(Device.id)))
+        if device_id:
+            device = db.scalar(select(Device).where(Device.user_id == user.id, Device.device_id == device_id))
+        else:
+            device = db.scalar(select(Device).where(Device.user_id == user.id).order_by(desc(Device.id)))
         if device is None:
-            return {"connected": False, "ea_active": False, "balance": None, "equity": None, "profit": None, "drawdown": None}
-        connected = device.last_seen is not None and (datetime.now(timezone.utc) - device.last_seen).total_seconds() < 30
-        return {"connected": connected, "ea_active": device.ea_active, "balance": device.balance,
+            return {"connected": False, "ea_active": False, "balance": None, "equity": None, "profit": None, "drawdown": None, "device_id": device_id}
+        age = (datetime.now(timezone.utc) - device.last_seen).total_seconds() if device.last_seen else None
+        connected = age is not None and age < 30
+        return {"connected": connected, "ea_active": bool(device.ea_active), "balance": device.balance,
                 "equity": device.equity, "profit": device.profit, "drawdown": device.drawdown,
-                "device_id": device.device_id, "last_seen": device.last_seen.isoformat() if device.last_seen else None}
+                "device_id": device.device_id, "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+                "last_seen_seconds": age}
 
 @app.post("/api/v1/ea/heartbeat")
 def heartbeat(heartbeat_data: Heartbeat, x_ea_token: Optional[str] = Header(default=None)):
