@@ -50,10 +50,11 @@ input bool RequireSupportedBroker = true;
 input string AllowedBrokers = "weltrade,deriv";
 input bool SyntheticOnly = true;
 input bool DebugTrading = true;
-input int MaxOpenPositions = 20;
+input int MaxOpenPositions = 100;
 input double MinimumAccountBalance = 2.0;
 input int MinimumProfitScalePositions = 5;
 input double ProfitRequiredToScale = 0.01;
+input double MinimumMarginLevelToAdd = 300.0;
 input double MinMarginLevel = 300.0;
 input double MaxLotPercentOfBalance = 5.0;
 input double BalancePerOpenTrade = 100.0;
@@ -366,13 +367,10 @@ bool RiskManagementOK()
          basketProfit += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
       }
    }
-   int balanceBasedMax=(int)MathFloor(AccountInfoDouble(ACCOUNT_BALANCE)/MathMax(BalancePerOpenTrade,0.01));
-   int allowedOpenTrades=MathMax(1,MathMin(MaxOpenPositions,balanceBasedMax));
    double balance=AccountInfoDouble(ACCOUNT_BALANCE);
    if(balance<MinimumAccountBalance) return false;
    bool scalingProfit=basketProfit>=ProfitRequiredToScale;
-   int profitScaledLimit=scalingProfit ? MathMax(allowedOpenTrades,MinimumProfitScalePositions) : allowedOpenTrades;
-   profitScaledLimit=MathMin(MaxOpenPositions,profitScaledLimit);
+   int profitScaledLimit=scalingProfit ? MathMax(MinimumProfitScalePositions,MaxOpenPositions) : MathMin(MaxOpenPositions,MathMax(1,MinimumProfitScalePositions));
    if(openCount>=profitScaledLimit) return false;
 
    MqlDateTime t; TimeToStruct(TimeCurrent(),t);
@@ -451,6 +449,26 @@ bool MultiTimeframeConfirm(bool buy)
    return confirmed>=2;
 }
 
+
+bool MarginAllowsNewTrade(ENUM_ORDER_TYPE orderType,double volume,double price)
+{
+   double freeMargin=AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+   if(freeMargin<=0) return false;
+   double required=0.0;
+   if(!OrderCalcMargin(orderType,_Symbol,volume,price,required) || required<=0) return false;
+   if(required>=freeMargin) return false;
+   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
+   double currentMargin=AccountInfoDouble(ACCOUNT_MARGIN);
+   double futureMargin=currentMargin+required;
+   if(futureMargin<=0) return true;
+   double futureLevel=equity/futureMargin*100.0;
+   double brokerStopOut=AccountInfoDouble(ACCOUNT_MARGIN_SO_SO);
+   long stopMode=AccountInfoInteger(ACCOUNT_MARGIN_SO_MODE);
+   if(stopMode==ACCOUNT_STOPOUT_MODE_PERCENT && brokerStopOut>0)
+      return futureLevel>MathMax(MinimumMarginLevelToAdd,brokerStopOut+50.0);
+   return futureLevel>=MinimumMarginLevelToAdd;
+}
+
 double CalculateLotSize()
 {
    double minLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
@@ -488,6 +506,7 @@ void OpenBuy()
 {
    double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
    double lot=CalculateLotSize();
+   if(!MarginAllowsNewTrade(ORDER_TYPE_BUY,lot,ask)) { if(DebugTrading) Print("Leona DEBUG: BUY blocked by available margin."); return; }
    double sl=NormalizeDouble(ask-slPointsLive*_Point,_Digits);
    double tp=NormalizeDouble(ask+tpPointsLive*_Point,_Digits);
    if(trade.Buy(lot,_Symbol,ask,sl,tp,"Leona Pro X BUY"))
@@ -503,6 +522,7 @@ void OpenSell()
 {
    double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
    double lot=CalculateLotSize();
+   if(!MarginAllowsNewTrade(ORDER_TYPE_SELL,lot,bid)) { if(DebugTrading) Print("Leona DEBUG: SELL blocked by available margin."); return; }
    double sl=NormalizeDouble(bid+slPointsLive*_Point,_Digits);
    double tp=NormalizeDouble(bid-tpPointsLive*_Point,_Digits);
    if(trade.Sell(lot,_Symbol,bid,sl,tp,"Leona Pro X SELL"))
