@@ -26,6 +26,11 @@ input bool EA_Active = true;
 input group "Filters"
 input int MinVolatility = 60;
 input int MaxVolatility = 300;
+input bool UseAdaptiveVolatilityFilter = true;
+input double MinATRPricePercent = 0.01;
+input double MaxATRPricePercent = 1.00;
+input double MinSyntheticATRPrice = 0.0;
+input double MaxSyntheticATRPrice = 1000000.0;
 input double MinTrendStrength = 2.5;
 input int AIScoreThreshold = 6; // Minimum AI score required for an entry
 
@@ -155,7 +160,7 @@ void UpdateChartStatus()
       "API: ",apiState," | HEARTBEAT: ",apiHeartbeatOK ? "OK" : "WAITING","\n",
       "AI SCORE: ",diagnosticScore," | THRESHOLD: ",threshold," | ADX: ",DoubleToString(diagnosticADX,1),"\n",
       "POSITIONS: ",CountLeonaPositions(),"/",MaxOpenPositions," | MARGIN LEVEL: ",DoubleToString(marginLevel,1),"%\n",
-      "SPREAD: ",DoubleToString(diagnosticSpreadPoints,1)," pts | ATR: ",DoubleToString(diagnosticATR,_Digits),"\n",
+      "SPREAD: ",DoubleToString(diagnosticSpreadPoints,1)," pts | ATR: ",DoubleToString(diagnosticATR,_Digits),\n",
       "BALANCE: ",DoubleToString(balance,2)," | EQUITY: ",DoubleToString(equity,2),"\n",
       "BLOCKER: ",diagnosticBlocker
    );
@@ -571,7 +576,31 @@ int AIScore()
 bool VolatilityOK()
 {
    double atr=BufferValue(handleATR,0,0);
-   if(atr==EMPTY_VALUE) return false;
+   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   if(atr==EMPTY_VALUE || atr<=0 || bid<=0) return false;
+
+   // Synthetic indices can have large price-unit ATR values, so using
+   // forex-style fixed points (ATR/_Point) can incorrectly block valid markets.
+   if(UseAdaptiveVolatilityFilter)
+   {
+      double atrPercent=(atr/bid)*100.0;
+      bool percentOK=(atrPercent>=MinATRPricePercent && atrPercent<=MaxATRPricePercent);
+      bool absoluteOK=(atr>=MinSyntheticATRPrice && atr<=MaxSyntheticATRPrice);
+      if(DebugTrading)
+      {
+         static datetime lastVolLog=0;
+         if(TimeCurrent()!=lastVolLog)
+         {
+            lastVolLog=TimeCurrent();
+            PrintFormat("Leona VOLATILITY %s | ATR=%.5f | ATR%%=%.4f | range=%.4f-%.4f%%",
+                        (percentOK && absoluteOK) ? "OK" : "BLOCKED",
+                        atr,atrPercent,MinATRPricePercent,MaxATRPricePercent);
+         }
+      }
+      return percentOK && absoluteOK;
+   }
+
+   // Legacy fixed-point mode remains available for symbols where it is appropriate.
    double points=atr/_Point;
    return points>=MinVolatility && points<=MaxVolatility;
 }
@@ -834,7 +863,13 @@ void OnTick()
    if(!VolatilityOK())
    {
       diagnosticBlocker="VOLATILITY FILTER";
-      if(DebugTrading) Print("Leona DEBUG: blocked by volatility. ATR points outside ",MinVolatility,"-",MaxVolatility);
+      if(DebugTrading)
+      {
+         double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
+         double atrPct=(bid>0 && diagnosticATR>0) ? (diagnosticATR/bid)*100.0 : 0.0;
+         PrintFormat("Leona DEBUG: blocked by volatility. ATR=%.5f ATR%%=%.4f allowed=%.4f-%.4f%%",
+                     diagnosticATR,atrPct,MinATRPricePercent,MaxATRPricePercent);
+      }
       UpdateChartStatus();
       return;
    }
