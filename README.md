@@ -48,4 +48,13 @@ The integrated EA uses:
 
 Do not use live funds until the EA has been tested on a demo account and the complete mobile-to-MT5 command path has been verified.
 
-The API currently uses in-memory state. PostgreSQL persistence and production authentication are the next backend hardening stage.
+The API now uses SQLAlchemy persistence with PostgreSQL support on Render and SQLite fallback for development. Mobile API routes require a bearer session, devices are associated with users, and commands are scoped to the target device.
+
+### Required Render environment variables
+
+- `DATABASE_URL` — PostgreSQL connection string
+- `LEONA_JWT_SECRET` — long random JWT signing secret
+- `LEONA_ADMIN_USERNAME` — bootstrap administrator username
+- `LEONA_ADMIN_PASSWORD` — bootstrap administrator password
+
+Do not commit these values to GitHub. The EA still authenticates separately with its device token.
