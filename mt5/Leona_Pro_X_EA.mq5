@@ -64,6 +64,11 @@ double equityPeak = 0.0;
 datetime lastResetDate = 0;
 bool isTradingPaused = false;
 bool remoteTradingEnabled = true;
+double riskPercentLive = 1.0;
+int slPointsLive = 150;
+int tpPointsLive = 250;
+double maxDailyLossLive = 3.0;
+double maxDrawdownLive = 10.0;
 
 string Url(string path) { return ApiBaseUrl + path; }
 
@@ -115,6 +120,37 @@ string ExtractString(string json,string key,int from=0)
    return StringSubstr(json,p,e-p);
 }
 
+bool ExtractNumber(string json,string key,double &value)
+{
+   string needle="\"" + key + "\":";
+   int p=StringFind(json,needle);
+   if(p<0) return false;
+   p+=StringLen(needle);
+   int e=p;
+   int n=StringLen(json);
+   while(e<n)
+   {
+      ushort ch=StringGetCharacter(json,e);
+      if((ch>='0' && ch<='9') || ch=='-' || ch=='+' || ch=='.' || ch=='e' || ch=='E') e++;
+      else break;
+   }
+   if(e<=p) return false;
+   value=StringToDouble(StringSubstr(json,p,e-p));
+   return true;
+}
+
+bool ApplyRiskSettings(string json)
+{
+   double v;
+   bool any=false;
+   if(ExtractNumber(json,"risk_percent",v) && v>=0.01 && v<=10.0) { riskPercentLive=v; any=true; }
+   if(ExtractNumber(json,"sl_points",v) && v>=1 && v<=100000) { slPointsLive=(int)v; any=true; }
+   if(ExtractNumber(json,"tp_points",v) && v>=1 && v<=100000) { tpPointsLive=(int)v; any=true; }
+   if(ExtractNumber(json,"max_daily_loss",v) && v>=0.1 && v<=50.0) { maxDailyLossLive=v; any=true; }
+   if(ExtractNumber(json,"max_drawdown",v) && v>=0.1 && v<=90.0) { maxDrawdownLive=v; any=true; }
+   return any;
+}
+
 void CloseAllPositions()
 {
    for(int i=PositionsTotal()-1;i>=0;i--)
@@ -147,7 +183,12 @@ void ProcessRemoteCommands()
       if(cmd=="START_ROBOT") { remoteTradingEnabled=true; GlobalVariableSet("LEONA_EA_ACTIVE",1.0); }
       else if(cmd=="STOP_ROBOT") { remoteTradingEnabled=false; GlobalVariableSet("LEONA_EA_ACTIVE",0.0); }
       else if(cmd=="CLOSE_ALL") CloseAllPositions();
-      else if(cmd=="UPDATE_RISK") msg="Risk command received; restart EA after changing input parameters";
+      else if(cmd=="UPDATE_RISK")
+      {
+         if(ApplyRiskSettings(response))
+            msg=StringFormat("Risk applied: %.2f%% risk, SL %d, TP %d, daily loss %.2f%%, drawdown %.2f%%",riskPercentLive,slPointsLive,tpPointsLive,maxDailyLossLive,maxDrawdownLive);
+         else { ok=false; msg="Invalid or missing risk settings"; }
+      }
       else { ok=false; msg="Unsupported command"; }
 
       ReportCommand(id,ok?"COMPLETED":"FAILED",msg);
@@ -188,10 +229,10 @@ bool RiskManagementOK()
    if(startingBalance<=0) startingBalance=AccountInfoDouble(ACCOUNT_BALANCE);
 
    double dailyPL=(equity-startingBalance)/startingBalance*100.0;
-   if(dailyPL<=-MaxDailyLoss) return false;
+   if(dailyPL<=-maxDailyLossLive) return false;
 
    if(equity>equityPeak) equityPeak=equity;
-   if(equityPeak>0 && (equityPeak-equity)/equityPeak*100.0>=MaxDrawdown) return false;
+   if(equityPeak>0 && (equityPeak-equity)/equityPeak*100.0>=maxDrawdownLive) return false;
 
    if(consecutiveLosses>=MaxConsecutiveLosses) return false;
    if(UseEquityProtection && equity<AccountInfoDouble(ACCOUNT_BALANCE)*0.95) return false;
@@ -274,14 +315,14 @@ bool MultiTimeframeConfirm(bool buy)
 
 double CalculateLotSize()
 {
-   if(RiskPercent<=0) return MathMax(LotSize,SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN));
+   if(riskPercentLive<=0) return MathMax(LotSize,SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN));
    double balance=AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskMoney=balance*RiskPercent/100.0;
+   double riskMoney=balance*riskPercentLive/100.0;
    double tickValue=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
    double tickSize=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
-   if(tickValue<=0 || tickSize<=0 || SL_Points<=0) return LotSize;
+   if(tickValue<=0 || tickSize<=0 || slPointsLive<=0) return LotSize;
    double valuePerPoint=tickValue*_Point/tickSize;
-   double lot=riskMoney/(SL_Points*valuePerPoint);
+   double lot=riskMoney/(slPointsLive*valuePerPoint);
    double minLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
    double maxLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX);
    double step=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
@@ -294,8 +335,8 @@ void OpenBuy()
 {
    double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
    double lot=CalculateLotSize();
-   double sl=NormalizeDouble(ask-SL_Points*_Point,_Digits);
-   double tp=NormalizeDouble(ask+TP_Points*_Point,_Digits);
+   double sl=NormalizeDouble(ask-slPointsLive*_Point,_Digits);
+   double tp=NormalizeDouble(ask+tpPointsLive*_Point,_Digits);
    if(trade.Buy(lot,_Symbol,ask,sl,tp,"Leona Pro X BUY"))
    {
       lastTradeTime=TimeCurrent(); tradesThisHour++;
@@ -306,8 +347,8 @@ void OpenSell()
 {
    double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
    double lot=CalculateLotSize();
-   double sl=NormalizeDouble(bid+SL_Points*_Point,_Digits);
-   double tp=NormalizeDouble(bid-TP_Points*_Point,_Digits);
+   double sl=NormalizeDouble(bid+slPointsLive*_Point,_Digits);
+   double tp=NormalizeDouble(bid-tpPointsLive*_Point,_Digits);
    if(trade.Sell(lot,_Symbol,bid,sl,tp,"Leona Pro X SELL"))
    {
       lastTradeTime=TimeCurrent(); tradesThisHour++;
@@ -356,6 +397,11 @@ int OnInit()
 
    startingBalance=AccountInfoDouble(ACCOUNT_BALANCE);
    equityPeak=AccountInfoDouble(ACCOUNT_EQUITY);
+   riskPercentLive=RiskPercent;
+   slPointsLive=SL_Points;
+   tpPointsLive=TP_Points;
+   maxDailyLossLive=MaxDailyLoss;
+   maxDrawdownLive=MaxDrawdown;
    remoteTradingEnabled=EA_Active;
    EventSetTimer(MathMax(1,RemotePollSeconds));
    return INIT_SUCCEEDED;
