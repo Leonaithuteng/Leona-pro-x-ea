@@ -228,7 +228,13 @@ def ea_status(device_id: Optional[str] = Query(default=None), user: User = Depen
             device = db.scalar(select(Device).where(Device.user_id == user.id).order_by(desc(Device.id)))
         if device is None:
             return {"connected": False, "ea_active": False, "balance": None, "equity": None, "profit": None, "drawdown": None, "device_id": device_id}
-        age = (datetime.now(timezone.utc) - device.last_seen).total_seconds() if device.last_seen else None
+        if device.last_seen:
+            last_seen = device.last_seen
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - last_seen).total_seconds()
+        else:
+            age = None
         connected = age is not None and age < 30
         return {"connected": connected, "ea_active": bool(device.ea_active), "balance": device.balance,
                 "equity": device.equity, "profit": device.profit, "drawdown": device.drawdown,
