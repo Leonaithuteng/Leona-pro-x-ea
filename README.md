@@ -5,13 +5,14 @@ Leona Pro X EA is an MT5 automated trading system with a Flutter mobile dashboar
 ## Repository structure
 
 - `mt5/Leona_Pro_X_EA.mq5` — integrated trading EA
+- `mt5/Leona_Pro_X_EA_LIVE_v32_FIXED.mq5` — current API-connected v3.2 synthetic scalper with smart spread and ATR exits
 - `mt5/Leona_Pro_X_API_Bridge.mq5` — standalone API bridge
 - `backend/main.py` — FastAPI service
 - `lib/main.dart` — Flutter dashboard
 
 ## Integrated EA
 
-The integrated EA uses:
+The current live EA uses:
 
 - M5 execution timeframe
 - M15/H1 confirmation
@@ -40,9 +41,9 @@ The integrated EA uses:
 6. Enable **Allow WebRequest for listed URL**.
 7. Add:
    `https://leona-pro-x-api.onrender.com`
-8. Attach **Leona Pro X EA** to the desired Weltrade synthetic symbol.
-9. Enter the `DeviceId` and `EaToken` supplied by the registration flow.
-10. Enable Algo Trading.
+8. Attach **Leona_Pro_X_EA_LIVE_v32_FIXED** to the desired Weltrade synthetic symbol.
+9. Sign in to the Android app, use the registered MT5 device, then enter its `DeviceId` and `EaToken` in the EA inputs.
+10. Add `https://leona-pro-x-api.onrender.com` to the MT5 WebRequest allow-list and enable Algo Trading.
 
 ## Safety
 
@@ -58,3 +59,11 @@ The API now uses SQLAlchemy persistence with PostgreSQL support on Render and SQ
 - `LEONA_ADMIN_PASSWORD` — bootstrap administrator password
 
 Do not commit these values to GitHub. The EA still authenticates separately with its device token.
+
+
+### v3.2 live fixes
+
+- API heartbeat and remote commands retained.
+- Smart synthetic spread filter uses live Bid/Ask and SYMBOL_POINT with ATR-relative limits.
+- ATR-based SL/TP with configurable risk-reward and synthetic-safe bounds.
+- Mobile dashboard authenticates against the FastAPI service and reads real EA heartbeat state.
