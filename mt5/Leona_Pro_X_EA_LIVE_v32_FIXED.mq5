@@ -9,9 +9,17 @@
 input group "Trading Parameters"
 input double LotSize = 0.01;
 input double RiskPercent = 1.0;
-input int MaxSpread = 0; // Legacy fixed-point filter disabled by default\ninput bool UseSmartSpreadFilter = true;\ninput double MaxSpreadATRPercent = 75.0;\ninput double MaxSpreadPricePercent = 0.020;\ninput bool ShowSpreadDiagnostics = true;
+input int MaxSpread = 0; // Legacy fixed-point filter disabled by default\ninput bool UseSmartSpreadFilter = true;
+input double MaxSpreadATRPercent = 75.0;
+input double MaxSpreadPricePercent = 0.020;
+input bool ShowSpreadDiagnostics = true;
 input int SL_Points = 150;
-input int TP_Points = 250;\ninput bool UseATRStops = true;\ninput double ATR_SL_Multiplier = 1.20;\ninput int ATR_MinSLPoints = 150;\ninput int ATR_MaxSLPoints = 5000;\ninput double ATR_RiskReward = 1.80;
+input int TP_Points = 250;
+input bool UseATRStops = true;
+input double ATR_SL_Multiplier = 1.20;
+input int ATR_MinSLPoints = 150;
+input int ATR_MaxSLPoints = 5000;
+input double ATR_RiskReward = 1.80;
 input bool EA_Active = true;
 
 input group "Filters"
@@ -69,7 +77,9 @@ int learningWins=0;
 int learningLosses=0;
 double learningNetProfit=0.0;
 double adaptiveThreshold=6.0;
-string diagnosticBlocker="STARTING";\ndouble diagnosticSpreadPoints=0.0;\ndouble diagnosticATR=0.0;
+string diagnosticBlocker="STARTING";
+double diagnosticSpreadPoints=0.0;
+double diagnosticATR=0.0;
 int diagnosticScore=0;
 double diagnosticADX=0.0;
 bool apiHeartbeatOK=false;
