@@ -57,9 +57,29 @@ class _LoginPageState extends State<LoginPage> {
     if(u.text.trim().isEmpty||p.text.isEmpty){setState(()=>error='Enter username and password.');return;}
     setState(() { busy = true; error = ''; });
     try { final r=await http.post(Uri.parse('$apiBaseUrl/api/v1/auth/login'),headers:{'Content-Type':'application/json'},body:jsonEncode({'username':u.text.trim(),'password':p.text})).timeout(const Duration(seconds:10));
-      if(r.statusCode!=200) throw Exception(); final d=jsonDecode(r.body); final sp=await SharedPreferences.getInstance(); await sp.setString('access_token',d['access_token']);
+      if(r.statusCode!=200) {
+        String detail = '';
+        try {
+          final body = jsonDecode(r.body);
+          detail = body['detail']?.toString() ?? '';
+        } catch (_) {}
+        if (r.statusCode == 401) {
+          throw Exception('Invalid username or password');
+        }
+        if (detail.isNotEmpty) {
+          throw Exception('Server error ${r.statusCode}: $detail');
+        }
+        throw Exception('Server error ${r.statusCode}');
+      }
+      final d=jsonDecode(r.body);
+      final sp=await SharedPreferences.getInstance();
+      await sp.setString('access_token',d['access_token']);
       if(mounted)Navigator.of(context).pushReplacement(MaterialPageRoute(builder:(_)=>DashboardPage(token:d['access_token'])));
-    } catch(_){if(mounted)setState(()=>error='Login failed. Check your credentials.');} finally{if(mounted)setState(()=>busy=false);}
+    } catch(e){
+      if(mounted)setState(()=>error=e is TimeoutException
+        ? 'Connection timed out. Check internet and try again.'
+        : 'Login failed: ${e.toString().replaceFirst('Exception: ', '')}');
+    } finally{if(mounted)setState(()=>busy=false);}
   }
   @override Widget build(BuildContext context)=>Scaffold(body:Center(child:SingleChildScrollView(padding:const EdgeInsets.all(28),child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:430),child:Column(children:[const Icon(Icons.auto_graph,size:64,color:Colors.greenAccent),const SizedBox(height:18),const Text('LEONA PRO X EA',style:TextStyle(fontSize:25,fontWeight:FontWeight.bold,letterSpacing:2)),const SizedBox(height:30),TextField(controller:u,decoration:const InputDecoration(labelText:'Username',border:OutlineInputBorder())),const SizedBox(height:14),TextField(controller:p,obscureText:true,decoration:const InputDecoration(labelText:'Password',border:OutlineInputBorder())),if(error.isNotEmpty)Padding(padding:const EdgeInsets.only(top:12),child:Text(error,style:const TextStyle(color:Colors.redAccent))),const SizedBox(height:20),SizedBox(width:double.infinity,child:ElevatedButton(onPressed:busy?null:login,child:busy?const CircularProgressIndicator():const Text('SIGN IN')))])))));
 }
