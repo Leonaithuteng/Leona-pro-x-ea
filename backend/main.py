@@ -75,6 +75,14 @@ def bootstrap_admin():
         if user is None:
             db.add(User(username=username, password_hash=pwd_context.hash(password), active=True))
             db.commit()
+            return
+
+        # Keep the configured Render admin credentials synchronized.
+        # This also repairs an admin account created with an older password.
+        if not pwd_context.verify(password, user.password_hash) or not user.active:
+            user.password_hash = pwd_context.hash(password)
+            user.active = True
+            db.commit()
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
     if credentials is None or credentials.scheme.lower() != "bearer":
