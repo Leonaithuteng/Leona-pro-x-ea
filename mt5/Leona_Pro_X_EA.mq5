@@ -206,12 +206,14 @@ bool BrokerAndSymbolOK()
    if(RequireWeltradeBroker)
    {
       string company=AccountInfoString(ACCOUNT_COMPANY);
-      if(StringFind(StringToLower(company),"weltrade")<0) return false;
+      StringToLower(company);
+      if(StringFind(company,"weltrade")<0) return false;
    }
 
    if(!SyntheticOnly) return true;
 
-   string symbol=StringToLower(_Symbol);
+   string symbol=_Symbol;
+   StringToLower(symbol);
    bool synthetic=
       StringFind(symbol,"vol")>=0 ||
       StringFind(symbol,"painx")>=0 ||
