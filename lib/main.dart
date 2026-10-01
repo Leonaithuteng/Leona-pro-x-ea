@@ -53,7 +53,7 @@ class _LoginPageState extends State<LoginPage> {
   final u=TextEditingController(), p=TextEditingController(); bool busy=false; String error='';
   Future<void> login() async {
     if(u.text.trim().isEmpty||p.text.isEmpty){setState(()=>error='Enter username and password.');return;}
-    setState(()=>{busy=true,error=''}.toString());
+    setState(() { busy = true; error = ''; });
     try { final r=await http.post(Uri.parse('$apiBaseUrl/api/v1/auth/login'),headers:{'Content-Type':'application/json'},body:jsonEncode({'username':u.text.trim(),'password':p.text})).timeout(const Duration(seconds:10));
       if(r.statusCode!=200) throw Exception(); final d=jsonDecode(r.body); final sp=await SharedPreferences.getInstance(); await sp.setString('access_token',d['access_token']);
       if(mounted)Navigator.of(context).pushReplacement(MaterialPageRoute(builder:(_)=>DashboardPage(token:d['access_token'])));
@@ -163,10 +163,6 @@ class _DashboardPageState extends State<DashboardPage> {
           .post(
             Uri.parse('$apiBaseUrl/api/v1/ea/command'),
             headers: headers,
-            headers: headers,
-            /*
-              'Content-Type': 'application/json',
-            },*/
             body: jsonEncode({
               'command': command,
               'payload': {},
