@@ -64,6 +64,11 @@ class Heartbeat(BaseModel):
     ea_active: bool = False
     broker: Optional[str] = None
     symbol: Optional[str] = None
+    open_positions: int = 0
+    open_profit: float = 0.0
+    signal_score: int = 0
+    atr: float = 0.0
+    spread: float = 0.0
 
 def create_token(username: str) -> str:
     expires = datetime.now(timezone.utc) + timedelta(hours=12)
@@ -177,7 +182,9 @@ def list_devices(user: User = Depends(get_current_user)):
                            "ea_active": d.ea_active,
                            "sizing_mode": d.sizing_mode, "lot_size": d.lot_size, "risk_percent": d.risk_percent, "sl_points": d.sl_points,
                            "tp_points": d.tp_points, "max_daily_loss": d.max_daily_loss,
-                           "max_drawdown": d.max_drawdown} for d in rows]}
+                           "max_drawdown": d.max_drawdown, "open_positions": d.open_positions,
+                           "open_profit": d.open_profit, "signal_score": d.signal_score,
+                           "atr": d.atr, "spread": d.spread, "symbol": d.symbol} for d in rows]}
 
 @app.get("/api/v1/devices/{device_id}/settings")
 def get_device_settings(device_id: str, user: User = Depends(get_current_user)):
@@ -246,7 +253,9 @@ def ea_status(device_id: Optional[str] = Query(default=None), user: User = Depen
         connected = age is not None and age < 30
         return {"connected": connected, "ea_active": bool(device.ea_active), "balance": device.balance,
                 "equity": device.equity, "profit": device.profit, "drawdown": device.drawdown,
-                "device_id": device.device_id, "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+                "open_positions": device.open_positions, "open_profit": device.open_profit,
+                "signal_score": device.signal_score, "atr": device.atr, "spread": device.spread,
+                "symbol": device.symbol, "device_id": device.device_id, "last_seen": device.last_seen.isoformat() if device.last_seen else None,
                 "last_seen_seconds": age}
 
 @app.post("/api/v1/ea/heartbeat")
@@ -261,6 +270,12 @@ def heartbeat(heartbeat_data: Heartbeat, x_ea_token: Optional[str] = Header(defa
         device.profit = heartbeat_data.profit
         device.drawdown = heartbeat_data.drawdown
         device.ea_active = heartbeat_data.ea_active
+        device.open_positions = heartbeat_data.open_positions
+        device.open_profit = heartbeat_data.open_profit
+        device.signal_score = heartbeat_data.signal_score
+        device.atr = heartbeat_data.atr
+        device.spread = heartbeat_data.spread
+        device.symbol = heartbeat_data.symbol
         device.status = "ONLINE"
         db.commit()
         return {"status": "OK", "server_time": datetime.now(timezone.utc).isoformat()}
