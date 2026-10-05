@@ -503,7 +503,7 @@ class _DashboardPageState extends State<DashboardPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
-                value: selectedBroker,
+                initialValue: selectedBroker,
                 decoration: const InputDecoration(labelText: 'Broker'),
                 items: const [
                   DropdownMenuItem(value: 'Weltrade', child: Text('Weltrade')),
@@ -585,7 +585,7 @@ class _DashboardPageState extends State<DashboardPage> {
             child: Column(
               children: [
                 DropdownButtonFormField<String>(
-                  value: mode,
+                initialValue: mode,
                   decoration: const InputDecoration(labelText: 'Sizing mode'),
                   items: const [
                     DropdownMenuItem(value: 'RISK', child: Text('Risk %')),
@@ -704,7 +704,7 @@ class _DashboardPageState extends State<DashboardPage> {
           boxShadow: [
             BoxShadow(
               color: (ok ? Colors.greenAccent : Colors.redAccent)
-                  .withOpacity(0.35),
+                  .withValues(alpha: 0.35),
               blurRadius: 8,
             ),
           ],
@@ -877,7 +877,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                     Switch(
                       value: robotActive,
-                      activeColor: Colors.greenAccent,
+                      activeThumbColor: Colors.greenAccent,
                       onChanged: commandLoading
                           ? null
                           : (value) => sendCommand(
