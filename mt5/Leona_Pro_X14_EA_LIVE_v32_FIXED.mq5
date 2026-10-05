@@ -32,7 +32,7 @@ input double MaxATRPricePercent = 1.00;
 input double MinSyntheticATRPrice = 0.0;
 input double MaxSyntheticATRPrice = 1000000.0;
 input double MinTrendStrength = 2.5;
-input int AIScoreThreshold = 6; // Minimum AI score required for an entry
+input int AIScoreThreshold = 2; // Aggressive default: low threshold for frequent synthetic scalping entries
 
 input group "Time & Cooldown"
 input int CooldownSeconds = 1;
@@ -617,10 +617,26 @@ bool MarginAllowsNewTrade(ENUM_ORDER_TYPE orderType,double volume,double price)
    if(freeMargin<=0) return false;
 
    double required=0.0;
-   if(!OrderCalcMargin(orderType,_Symbol,volume,price,required) || required<=0)
+   if(!OrderCalcMargin(orderType,_Symbol,volume,price,required))
+   {
+      if(DebugTrading) Print("Leona DEBUG: OrderCalcMargin failed. Error=",GetLastError(),
+                             " free margin=",DoubleToString(freeMargin,2),
+                             " lot=",DoubleToString(volume,2));
       return false;
+   }
 
-   return required < freeMargin;
+   if(required<=0)
+   {
+      if(DebugTrading) Print("Leona DEBUG: broker returned zero required margin. Free margin=",
+                             DoubleToString(freeMargin,2));
+      return false;
+   }
+
+   bool ok=(required < freeMargin);
+   if(!ok && DebugTrading)
+      Print("Leona DEBUG: insufficient free margin. Required=",DoubleToString(required,2),
+            " Free=",DoubleToString(freeMargin,2));
+   return ok;
 }
 
 double CalculateLotSize(double stopDistancePrice=0.0)
@@ -667,6 +683,10 @@ void OpenBuy()
 
    double tpDistance=UseATRStops ? slDistance*ATR_RiskReward : tpPointsLive*_Point;
    double lot=CalculateLotSize(slDistance);
+   if(DebugTrading) Print("Leona BUY PRECHECK: lot=",DoubleToString(lot,2),
+                          " ask=",DoubleToString(ask,_Digits),
+                          " SLdist=",DoubleToString(slDistance,_Digits),
+                          " TPdist=",DoubleToString(tpDistance,_Digits));
 
    if(!MarginAllowsNewTrade(ORDER_TYPE_BUY,lot,ask)) { if(DebugTrading) Print("Leona DEBUG: BUY blocked by available margin."); return; }
 
@@ -700,6 +720,10 @@ void OpenSell()
 
    double tpDistance=UseATRStops ? slDistance*ATR_RiskReward : tpPointsLive*_Point;
    double lot=CalculateLotSize(slDistance);
+   if(DebugTrading) Print("Leona SELL PRECHECK: lot=",DoubleToString(lot,2),
+                          " bid=",DoubleToString(bid,_Digits),
+                          " SLdist=",DoubleToString(slDistance,_Digits),
+                          " TPdist=",DoubleToString(tpDistance,_Digits));
 
    if(!MarginAllowsNewTrade(ORDER_TYPE_SELL,lot,bid)) { if(DebugTrading) Print("Leona DEBUG: SELL blocked by available margin."); return; }
 
@@ -888,10 +912,18 @@ void OnTick()
    int score=AIScore();
    diagnosticScore=score;
    int threshold=(int)MathRound(EnableAdaptiveLearning ? adaptiveThreshold : (double)AIScoreThreshold);
-   if(AggressiveScalping) threshold=MathMax(2,threshold-2);
+   if(AggressiveScalping) threshold=MathMax(1,threshold-1);
 
    bool buyConfirm=MultiTimeframeConfirm(true);
    bool sellConfirm=MultiTimeframeConfirm(false);
+
+   if(DebugTrading)
+      Print("Leona SIGNAL CHECK: score=",score,
+            " threshold=",threshold,
+            " buyConfirm=",buyConfirm,
+            " sellConfirm=",sellConfirm,
+            " ADX=",DoubleToString(adx,2),
+            " ATR=",DoubleToString(diagnosticATR,_Digits));
 
    if(score>=threshold && buyConfirm)
    {
