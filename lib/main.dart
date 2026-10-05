@@ -868,7 +868,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           const Text(
                             'The phone is the control centre; the MT5 execution engine trades automatically.',
                             style: TextStyle(
-                              color: Colors.white45,
+                              color: Colors.white54,
                               fontSize: 11,
                             ),
                           ),
@@ -1109,7 +1109,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     if (activity.isEmpty)
                       const Text(
                         'No recent activity recorded.',
-                        style: TextStyle(color: Colors.white45),
+                        style: TextStyle(color: Colors.white54),
                       )
                     else
                       ...activity.take(8).map(
@@ -1186,7 +1186,7 @@ class _DashboardPageState extends State<DashboardPage> {
       children: [
         Icon(icon, size: 17, color: Colors.greenAccent),
         const SizedBox(height: 4),
-        Text(label, style: const TextStyle(color: Colors.white45, fontSize: 10)),
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 10)),
         const SizedBox(height: 3),
         Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
       ],
