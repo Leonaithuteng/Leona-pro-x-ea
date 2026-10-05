@@ -306,20 +306,57 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
    Print("Leona: closed trade P/L=",DoubleToString(pnl,2)," consecutive losses=",consecutiveLosses);
 }
 
-void CloseAllPositions()
+bool CloseAllPositions(string &message)
 {
+   int found=0;
+   int closed=0;
+   int failed=0;
+
    for(int i=PositionsTotal()-1;i>=0;i--)
    {
       ulong ticket=PositionGetTicket(i);
-      if(ticket>0 && PositionSelectByTicket(ticket))
+      if(ticket==0 || !PositionSelectByTicket(ticket)) continue;
+
+      long magic=PositionGetInteger(POSITION_MAGIC);
+      if(magic!=123456) continue;
+
+      found++;
+      string symbol=PositionGetString(POSITION_SYMBOL);
+
+      ResetLastError();
+      bool sent=trade.PositionClose(ticket);
+      uint rc=trade.ResultRetcode();
+
+      if(sent && (rc==TRADE_RETCODE_DONE ||
+                  rc==TRADE_RETCODE_DONE_PARTIAL ||
+                  rc==TRADE_RETCODE_PLACED))
       {
-         long magic=PositionGetInteger(POSITION_MAGIC);
-         string symbol=PositionGetString(POSITION_SYMBOL);
-         if(magic!=123456) continue;
-         if(!trade.PositionClose(ticket))
-            Print("Leona: failed to close EA ticket ",ticket," symbol=",symbol," retcode=",trade.ResultRetcode());
+         closed++;
+         Print("Leona CLOSE EXECUTED: ticket=",ticket,
+               " symbol=",symbol," retcode=",rc);
+      }
+      else
+      {
+         failed++;
+         Print("Leona CLOSE REJECTED: ticket=",ticket,
+               " symbol=",symbol,
+               " sent=",sent,
+               " retcode=",rc,
+               " description=",trade.ResultRetcodeDescription(),
+               " error=",GetLastError());
       }
    }
+
+   int remaining=CountLeonaPositions();
+   if(found==0)
+      message="No Leona EA positions were open.";
+   else if(remaining==0)
+      message=StringFormat("Closed %d of %d Leona EA positions successfully.",closed,found);
+   else
+      message=StringFormat("Closed %d of %d positions; %d failed. %d remain open.",
+                           closed,found,failed,remaining);
+
+   return remaining==0;
 }
 
 void ProcessRemoteCommands()
@@ -376,7 +413,11 @@ void ProcessRemoteCommands()
       }
       else if(cmd=="START_ROBOT") { remoteTradingEnabled=true; GlobalVariableSet("LEONA_EA_ACTIVE",1.0); }
       else if(cmd=="STOP_ROBOT") { remoteTradingEnabled=false; GlobalVariableSet("LEONA_EA_ACTIVE",0.0); }
-      else if(cmd=="CLOSE_ALL") CloseAllPositions();
+      else if(cmd=="CLOSE_ALL")
+      {
+         ok=CloseAllPositions(msg);
+         if(!ok && msg=="") msg="One or more EA positions could not be closed.";
+      }
       else if(cmd=="UPDATE_RISK")
       {
          if(ApplyRiskSettings(response))
