@@ -240,6 +240,11 @@ class _DashboardPageState extends State<DashboardPage> {
   double equity = 0;
   double profit = 0;
   double drawdown = 0;
+  double openProfit = 0;
+  double atr = 0;
+  double spread = 0;
+  int openPositions = 0;
+  int signalScore = 0;
 
   String connectionMessage = 'Connecting...';
   String lastAction = 'No commands sent yet';
@@ -326,6 +331,14 @@ class _DashboardPageState extends State<DashboardPage> {
         equity = _number(data['equity']);
         profit = _number(data['profit']);
         drawdown = _number(data['drawdown']);
+        openProfit = _number(data['open_profit']);
+        atr = _number(data['atr']);
+        spread = _number(data['spread']);
+        openPositions = _intNumber(data['open_positions']);
+        signalScore = _intNumber(data['signal_score']);
+        if ((data['symbol'] ?? '').toString().isNotEmpty) {
+          symbol = data['symbol'].toString();
+        }
         robotActive = data['ea_active'] == true;
         if ((data['device_id'] ?? '').toString().isNotEmpty) {
           deviceId = data['device_id'].toString();
@@ -945,6 +958,52 @@ class _DashboardPageState extends State<DashboardPage> {
               ],
             ),
 
+
+            const SizedBox(height: 8),
+
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(17),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'LIVE MARKET ENGINE',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.7,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _telemetry('OPEN TRADES', openPositions.toString(), Icons.layers),
+                        ),
+                        Expanded(
+                          child: _telemetry('OPEN P/L', openProfit.toStringAsFixed(2), Icons.account_balance),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _telemetry('AI SCORE', signalScore.toString(), Icons.psychology),
+                        ),
+                        Expanded(
+                          child: _telemetry('SPREAD', spread.toStringAsFixed(1), Icons.swap_horiz),
+                        ),
+                        Expanded(
+                          child: _telemetry('ATR', atr.toStringAsFixed(2), Icons.show_chart),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
             const SizedBox(height: 14),
 
             Row(
@@ -1118,6 +1177,19 @@ class _DashboardPageState extends State<DashboardPage> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _telemetry(String label, String value, IconData icon) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 17, color: Colors.greenAccent),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(color: Colors.white45, fontSize: 10)),
+        const SizedBox(height: 3),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+      ],
     );
   }
 
