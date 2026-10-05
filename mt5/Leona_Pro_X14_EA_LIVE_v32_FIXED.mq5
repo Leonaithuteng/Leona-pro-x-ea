@@ -190,12 +190,23 @@ void SendHeartbeat()
    double dd=bal>0 ? (bal-eq)/bal*100.0 : 0.0;
    string broker=AccountInfoString(ACCOUNT_COMPANY);
    string symbol=_Symbol;
+   int openPositions=0;
+   double openProfit=0.0;
+   for(int i=0;i<PositionsTotal();i++)
+   {
+      ulong ticket=PositionGetTicket(i);
+      if(ticket==0) continue;
+      long magic=PositionGetInteger(POSITION_MAGIC);
+      if(magic!=123456) continue;
+      openPositions++;
+      openProfit += PositionGetDouble(POSITION_PROFIT);
+   }
    StringReplace(broker,"\\","\\\\");
    StringReplace(broker,"\"","\\\"");
    StringReplace(symbol,"\\","\\\\");
    StringReplace(symbol,"\"","\\\"");
-   string body=StringFormat("{\"balance\":%.2f,\"equity\":%.2f,\"profit\":%.2f,\"drawdown\":%.2f,\"ea_active\":%s,\"broker\":\"%s\",\"symbol\":\"%s\"}",
-      bal,eq,pl,dd,(EA_Active && remoteTradingEnabled && !isTradingPaused)?"true":"false",broker,symbol);
+   string body=StringFormat("{\"balance\":%.2f,\"equity\":%.2f,\"profit\":%.2f,\"drawdown\":%.2f,\"ea_active\":%s,\"broker\":\"%s\",\"symbol\":\"%s\",\"open_positions\":%d,\"open_profit\":%.2f,\"signal_score\":%d,\"atr\":%.8f,\"spread\":%.2f}",
+      bal,eq,pl,dd,(EA_Active && remoteTradingEnabled && !isTradingPaused)?"true":"false",broker,symbol,openPositions,openProfit,diagnosticScore,diagnosticATR,diagnosticSpreadPoints);
    string response;
    bool ok=HttpRequest("POST",Url("/api/v1/ea/heartbeat"),body,response,EaToken);
    if(ok)
