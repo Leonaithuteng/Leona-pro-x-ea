@@ -45,6 +45,12 @@ class Device(Base):
     tp_points: Mapped[int] = mapped_column(Integer, default=250)
     max_daily_loss: Mapped[float] = mapped_column(Float, default=3.0)
     max_drawdown: Mapped[float] = mapped_column(Float, default=10.0)
+    open_positions: Mapped[int] = mapped_column(Integer, default=0)
+    open_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    signal_score: Mapped[int] = mapped_column(Integer, default=0)
+    atr: Mapped[float] = mapped_column(Float, default=0.0)
+    spread: Mapped[float] = mapped_column(Float, default=0.0)
+    symbol: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class Command(Base):
@@ -90,6 +96,12 @@ def migrate_device_columns():
         ("tp_points", "INTEGER DEFAULT 250"),
         ("max_daily_loss", "FLOAT DEFAULT 3.0"),
         ("max_drawdown", "FLOAT DEFAULT 10.0"),
+        ("open_positions", "INTEGER DEFAULT 0"),
+        ("open_profit", "FLOAT DEFAULT 0.0"),
+        ("signal_score", "INTEGER DEFAULT 0"),
+        ("atr", "FLOAT DEFAULT 0.0"),
+        ("spread", "FLOAT DEFAULT 0.0"),
+        ("symbol", "VARCHAR(100)"),
     ]
     with engine.begin() as conn:
         for name, definition in additions:
