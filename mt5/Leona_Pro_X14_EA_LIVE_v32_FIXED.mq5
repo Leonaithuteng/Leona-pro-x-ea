@@ -592,27 +592,24 @@ bool MultiTimeframeConfirm(bool buy)
       }
       IndicatorRelease(h);
    }
-   return confirmed>=2;
+   // Aggressive mode needs only one of M5/M15/H1 aligned;
+   // standard mode keeps the stronger 2-of-3 confirmation.
+   return AggressiveScalping ? confirmed>=1 : confirmed>=2;
 }
 
 
 bool MarginAllowsNewTrade(ENUM_ORDER_TYPE orderType,double volume,double price)
 {
+   // Keep only the broker's fundamental free-margin requirement.
+   // The previous 300% future-margin gate prevented aggressive scaling.
    double freeMargin=AccountInfoDouble(ACCOUNT_MARGIN_FREE);
    if(freeMargin<=0) return false;
+
    double required=0.0;
-   if(!OrderCalcMargin(orderType,_Symbol,volume,price,required) || required<=0) return false;
-   if(required>=freeMargin) return false;
-   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
-   double currentMargin=AccountInfoDouble(ACCOUNT_MARGIN);
-   double futureMargin=currentMargin+required;
-   if(futureMargin<=0) return true;
-   double futureLevel=equity/futureMargin*100.0;
-   double brokerStopOut=AccountInfoDouble(ACCOUNT_MARGIN_SO_SO);
-   long stopMode=AccountInfoInteger(ACCOUNT_MARGIN_SO_MODE);
-   if(stopMode==ACCOUNT_STOPOUT_MODE_PERCENT && brokerStopOut>0)
-      return futureLevel>MathMax(MinimumMarginLevelToAdd,brokerStopOut+50.0);
-   return futureLevel>=MinimumMarginLevelToAdd;
+   if(!OrderCalcMargin(orderType,_Symbol,volume,price,required) || required<=0)
+      return false;
+
+   return required < freeMargin;
 }
 
 double CalculateLotSize(double stopDistancePrice=0.0)
@@ -623,29 +620,28 @@ double CalculateLotSize(double stopDistancePrice=0.0)
    if(minLot<=0) minLot=0.01;
    if(maxLot<=0) maxLot=100.0;
    if(step<=0) step=minLot;
+
    if(!useRiskSizingLive)
    {
       double lot=MathMax(minLot,MathMin(maxLot,lotSizeLive));
-      double maxLotByBalance=AccountInfoDouble(ACCOUNT_BALANCE)*MaxLotPercentOfBalance/100.0;
-      if(maxLotByBalance>0) lot=MathMin(lot,maxLotByBalance);
-      lot=MathMax(minLot,lot);
       lot=MathFloor(lot/step)*step;
-      return NormalizeDouble(lot,2);
+      return NormalizeDouble(MathMax(minLot,lot),2);
    }
-   if(riskPercentLive<=0) return MathMax(LotSize,SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN));
+
    double balance=AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskMoney=balance*riskPercentLive/100.0;
+   double riskMoney=balance*MathMax(0.01,riskPercentLive)/100.0;
    double tickValue=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
    double tickSize=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
-   if(tickValue<=0 || tickSize<=0 || slPointsLive<=0) return LotSize;
-   double valuePerPoint=tickValue*_Point/tickSize;
-   double lot=riskMoney/(slPointsLive*valuePerPoint);
+   double distance=(stopDistancePrice>0 ? stopDistancePrice : slPointsLive*_Point);
+
+   if(tickValue<=0 || tickSize<=0 || distance<=0)
+      return NormalizeDouble(MathMax(minLot,MathMin(maxLot,LotSize)),2);
+
+   double valuePerPriceUnit=tickValue/tickSize;
+   double lot=riskMoney/(distance*valuePerPriceUnit);
    lot=MathMax(minLot,MathMin(maxLot,lot));
-   double maxLotByBalance=AccountInfoDouble(ACCOUNT_BALANCE)*MaxLotPercentOfBalance/100.0;
-   if(maxLotByBalance>0) lot=MathMin(lot,maxLotByBalance);
-   lot=MathMax(minLot,lot);
-   if(step>0) lot=MathFloor(lot/step)*step;
-   return NormalizeDouble(lot,2);
+   lot=MathFloor(lot/step)*step;
+   return NormalizeDouble(MathMax(minLot,lot),2);
 }
 
 void OpenBuy()
@@ -859,7 +855,7 @@ void OnTick()
    int score=AIScore();
    diagnosticScore=score;
    int threshold=(int)MathRound(EnableAdaptiveLearning ? adaptiveThreshold : (double)AIScoreThreshold);
-   if(AggressiveScalping) threshold=MathMax(1,threshold-1);
+   if(AggressiveScalping) threshold=MathMax(2,threshold-2);
 
    bool buyConfirm=MultiTimeframeConfirm(true);
    bool sellConfirm=MultiTimeframeConfirm(false);
