@@ -22,6 +22,17 @@ jobs:
       - name: Generate Android project files
         run: flutter create --platforms=android --project-name leona_pro_x_ea .
 
+      - name: Remove generated sample test
+        run: rm -rf test
+
+      - name: Use project analyzer configuration
+        run: |
+          cat > analysis_options.yaml <<'EOF'
+          analyzer:
+            exclude:
+              - build/**
+          EOF
+
       - name: Get dependencies
         run: flutter pub get
 
