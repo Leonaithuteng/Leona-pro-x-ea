@@ -29,8 +29,22 @@ jobs:
         run: |
           sed -i '/<manifest xmlns:android=/a\    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
 
+      - name: Remove generated sample test
+        run: rm -rf test
+
+      - name: Use project analyzer configuration
+        run: |
+          cat > analysis_options.yaml <<'EOF'
+          analyzer:
+            exclude:
+              - build/**
+          EOF
+
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
 
       - name: Set application name
         run: |
