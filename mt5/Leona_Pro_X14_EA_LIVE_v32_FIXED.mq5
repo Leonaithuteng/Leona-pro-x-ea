@@ -661,13 +661,20 @@ void OpenBuy()
 
    double sl=NormalizeDouble(ask-slDistance,_Digits);
    double tp=NormalizeDouble(ask+tpDistance,_Digits);
-   if(trade.Buy(lot,_Symbol,ask,sl,tp,"Leona Pro X BUY"))
+   bool sent=trade.Buy(lot,_Symbol,ask,sl,tp,"Leona Pro X BUY");
+   uint rc=trade.ResultRetcode();
+   if(sent && (rc==TRADE_RETCODE_DONE || rc==TRADE_RETCODE_DONE_PARTIAL || rc==TRADE_RETCODE_PLACED))
    {
       lastTradeTime=TimeCurrent(); tradesThisHour++;
-      Print("Leona BUY opened. lot=",lot," SL=",sl," TP=",tp);
+      diagnosticBlocker="BUY EXECUTED";
+      Print("Leona BUY EXECUTED. lot=",lot," SL=",sl," TP=",tp," retcode=",rc);
    }
    else
-      Print("Leona BUY rejected. retcode=",trade.ResultRetcode()," description=",trade.ResultRetcodeDescription()," lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
+   {
+      diagnosticBlocker="BUY REJECTED";
+      Print("Leona BUY REJECTED. sent=",sent," retcode=",rc," description=",trade.ResultRetcodeDescription(),
+            " lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
+   }
 }
 
 void OpenSell()
@@ -687,13 +694,20 @@ void OpenSell()
 
    double sl=NormalizeDouble(bid+slDistance,_Digits);
    double tp=NormalizeDouble(bid-tpDistance,_Digits);
-   if(trade.Sell(lot,_Symbol,bid,sl,tp,"Leona Pro X SELL"))
+   bool sent=trade.Sell(lot,_Symbol,bid,sl,tp,"Leona Pro X SELL");
+   uint rc=trade.ResultRetcode();
+   if(sent && (rc==TRADE_RETCODE_DONE || rc==TRADE_RETCODE_DONE_PARTIAL || rc==TRADE_RETCODE_PLACED))
    {
       lastTradeTime=TimeCurrent(); tradesThisHour++;
-      Print("Leona SELL opened. lot=",lot," SL=",sl," TP=",tp);
+      diagnosticBlocker="SELL EXECUTED";
+      Print("Leona SELL EXECUTED. lot=",lot," SL=",sl," TP=",tp," retcode=",rc);
    }
    else
-      Print("Leona SELL rejected. retcode=",trade.ResultRetcode()," description=",trade.ResultRetcodeDescription()," lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
+   {
+      diagnosticBlocker="SELL REJECTED";
+      Print("Leona SELL REJECTED. sent=",sent," retcode=",rc," description=",trade.ResultRetcodeDescription(),
+            " lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
+   }
 }
 
 void ManagePositions()
@@ -791,6 +805,14 @@ void OnTick()
       UpdateChartStatus();
       return;
    }
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED) || !AccountInfoInteger(ACCOUNT_TRADE_EXPERT))
+   {
+      diagnosticBlocker="MT5 AUTO TRADING DISABLED";
+      if(DebugTrading) Print("Leona DEBUG: automated trading permission is disabled in terminal, EA settings, or account.");
+      UpdateChartStatus();
+      return;
+   }
+
 
    if(!BrokerAndSymbolOK())
    {
