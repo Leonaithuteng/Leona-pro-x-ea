@@ -24,7 +24,7 @@ input double ATR_RiskReward = 1.80;
 input bool UseDollarTP = true;
 input double MinTPProfitUSD = 1.0;
 input double MaxTPProfitUSD = 100.0;
-input double TPProfitUSDPerLot = 100.0;
+input double TPProfitUSDPerLot = 25.0;
 input bool EA_Active = true;
 
 input group "Filters"
@@ -961,8 +961,8 @@ bool OpenSell()
    slDistance=MathMax(slDistance,ATR_MinSLPoints*_Point);
    slDistance=MathMin(slDistance,ATR_MaxSLPoints*_Point);
 
-   double tpDistance=UseATRStops ? slDistance*ATR_RiskReward : tpPointsLive*_Point;
    double lot=CalculateLotSize(slDistance);
+   double tpDistance=UseDollarTP ? CalculateTPDistanceForProfit(lot) : (UseATRStops ? slDistance*ATR_RiskReward : tpPointsLive*_Point);
    if(DebugTrading) Print("Leona SELL PRECHECK: lot=",DoubleToString(lot,2),
                           " bid=",DoubleToString(bid,_Digits),
                           " SLdist=",DoubleToString(slDistance,_Digits),
