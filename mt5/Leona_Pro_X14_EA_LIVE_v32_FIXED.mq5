@@ -54,19 +54,17 @@ input double MaxDrawdown = 10.0;
 input bool UseEquityProtection = true;
 input int MaxConsecutiveLosses = 10;
 
-input group "Local Control"
-input bool StartOnAttach = true;
-input bool ShowChartControls = true;
+input group "Remote Control"
+input string ApiBaseUrl = "https://leona-pro-x-api.onrender.com";
+input string DeviceId = "";
+input string EaToken = "";
+input int RemotePollSeconds = 5;
+input bool EnableRemoteControl = true;
+input bool RequireSupportedBroker = true;
+input string AllowedBrokers = "weltrade,deriv";
+input bool SyntheticOnly = true;
+input bool DebugTrading = true;
 input bool AggressiveScalping = true;
-input int MaxOpenPositions = 100;
-input double MinimumAccountBalance = 2.0;
-input int MinimumProfitScalePositions = 5;
-input double ProfitRequiredToScale = 0.01;
-input double MinimumMarginLevelToAdd = 300.0;
-input double MinMarginLevel = 300.0;
-input double MaxLotPercentOfBalance = 5.0;
-input double BalancePerOpenTrade = 100.0;
-input int MaxSlippagePoints = 20;
 input int MaxOpenPositions = 100;
 input double MinimumAccountBalance = 2.0;
 input int MinimumProfitScalePositions = 5;
@@ -90,6 +88,8 @@ double diagnosticSpreadPoints=0.0;
 double diagnosticATR=0.0;
 int diagnosticScore=0;
 double diagnosticADX=0.0;
+bool apiHeartbeatOK=false;
+datetime lastHeartbeatTime=0;
 input bool EnableAdaptiveLearning = true;
 input int LearningWindowTrades = 30;
 input double AdaptiveThresholdMin = 4.0;
@@ -124,6 +124,159 @@ string LearningKey(){ return "LeonaPX_Learn_"+IntegerToString((int)ChartID()); }
 
 void LoadLearningState(){ string k=LearningKey(); if(GlobalVariableCheck(k)) adaptiveThreshold=GlobalVariableGet(k); adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,adaptiveThreshold)); }
 void SaveLearningState(){ GlobalVariableSet(LearningKey(),adaptiveThreshold); }
+
+string Url(string path) { return ApiBaseUrl + path; }
+
+int CountLeonaPositions()
+{
+   int count=0;
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong ticket=PositionGetTicket(i);
+      if(ticket>0 && PositionSelectByTicket(ticket) &&
+         PositionGetInteger(POSITION_MAGIC)==123456)
+         count++;
+   }
+   return count;
+}
+
+void UpdateChartStatus()
+{
+   double balance=AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
+   double marginLevel=AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
+   string company=AccountInfoString(ACCOUNT_COMPANY);
+   string apiState=apiHeartbeatOK ? "CONNECTED" : "WAITING";
+   string runState=(!EA_Active || !remoteTradingEnabled || isTradingPaused) ? "PAUSED" : "ACTIVE";
+   int threshold=(int)MathRound(EnableAdaptiveLearning ? adaptiveThreshold : (double)AIScoreThreshold);
+   if(AggressiveScalping) threshold=MathMax(1,threshold-1);
+
+   Comment(
+      "LEONA PRO X EA LIVE v3.2\n",
+      "MODE: ",AggressiveScalping ? "AGGRESSIVE SCALPER" : "STANDARD SCALPER","\n",
+      "STATUS: ",runState,"\n",
+      "BROKER: ",company,"\n",
+      "SYMBOL: ",_Symbol," | M5\n",
+      "API: ",apiState," | HEARTBEAT: ",apiHeartbeatOK ? "OK" : "WAITING","\n",
+      "AI SCORE: ",diagnosticScore," | THRESHOLD: ",threshold," | ADX: ",DoubleToString(diagnosticADX,1),"\n",
+      "POSITIONS: ",CountLeonaPositions(),"/",MaxOpenPositions," | MARGIN LEVEL: ",DoubleToString(marginLevel,1),"%\n",
+      "SPREAD: ",DoubleToString(diagnosticSpreadPoints,1)," pts | ATR: ",DoubleToString(diagnosticATR,_Digits),"\n",
+      "BALANCE: ",DoubleToString(balance,2)," | EQUITY: ",DoubleToString(equity,2),"\n",
+      "BLOCKER: ",diagnosticBlocker
+   );
+}
+
+bool HttpRequest(string method,string url,string body,string &response,string token="")
+{
+   char data[], result[];
+   string headers="Content-Type: application/json\r\n";
+   if(token!="") headers += "X-EA-Token: "+token+"\r\n";
+   string resultHeaders;
+   if(body!="") StringToCharArray(body,data,0,StringLen(body),CP_UTF8);
+   ResetLastError();
+   int code=WebRequest(method,url,headers,10000,data,result,resultHeaders);
+   if(code<0) { Print("Leona API WebRequest error: ",GetLastError()); return false; }
+   response=CharArrayToString(result,0,-1,CP_UTF8);
+   Print("Leona API ",method," HTTP ",code," -> ",url);
+   return code>=200 && code<300;
+}
+
+void SendHeartbeat()
+{
+   if(!EnableRemoteControl || EaToken=="") { Print("Leona heartbeat skipped: remote control disabled or EA token missing"); return; }
+   double bal=AccountInfoDouble(ACCOUNT_BALANCE);
+   double eq=AccountInfoDouble(ACCOUNT_EQUITY);
+   double pl=AccountInfoDouble(ACCOUNT_PROFIT);
+   double dd=bal>0 ? (bal-eq)/bal*100.0 : 0.0;
+   string broker=AccountInfoString(ACCOUNT_COMPANY);
+   string symbol=_Symbol;
+   int openPositions=0;
+   double openProfit=0.0;
+   for(int i=0;i<PositionsTotal();i++)
+   {
+      ulong ticket=PositionGetTicket(i);
+      if(ticket==0) continue;
+      long magic=PositionGetInteger(POSITION_MAGIC);
+      if(magic!=123456) continue;
+      openPositions++;
+      openProfit += PositionGetDouble(POSITION_PROFIT);
+   }
+   StringReplace(broker,"\\","\\\\");
+   StringReplace(broker,"\"","\\\"");
+   StringReplace(symbol,"\\","\\\\");
+   StringReplace(symbol,"\"","\\\"");
+   string body=StringFormat("{\"balance\":%.2f,\"equity\":%.2f,\"profit\":%.2f,\"drawdown\":%.2f,\"ea_active\":%s,\"broker\":\"%s\",\"symbol\":\"%s\",\"open_positions\":%d,\"open_profit\":%.2f,\"signal_score\":%d,\"atr\":%.8f,\"spread\":%.2f}",
+      bal,eq,pl,dd,(EA_Active && remoteTradingEnabled && !isTradingPaused)?"true":"false",broker,symbol,openPositions,openProfit,diagnosticScore,diagnosticATR,diagnosticSpreadPoints);
+   string response;
+   bool ok=HttpRequest("POST",Url("/api/v1/ea/heartbeat"),body,response,EaToken);
+   if(ok)
+   {
+      apiHeartbeatOK=true;
+      lastHeartbeatTime=TimeCurrent();
+      Print("Leona heartbeat accepted by API");
+   }
+   else
+   {
+      apiHeartbeatOK=false;
+      Print("Leona heartbeat failed");
+   }
+}
+
+void ReportCommand(string id,string status,string message)
+{
+   string safe=message;
+   StringReplace(safe,"\\","\\\\");
+   StringReplace(safe,"\"","\\\"");
+   string body=StringFormat("{\"command_id\":\"%s\",\"status\":\"%s\",\"message\":\"%s\"}",id,status,safe);
+   string response;
+   HttpRequest("POST",Url("/api/v1/commands/result"),body,response,EaToken);
+}
+
+string ExtractString(string json,string key,int from=0)
+{
+   string needle="\""+key+"\":\"";
+   int p=StringFind(json,needle,from);
+   if(p<0) return "";
+   p+=StringLen(needle);
+   int e=StringFind(json,"\"",p);
+   if(e<0) return "";
+   return StringSubstr(json,p,e-p);
+}
+
+bool ExtractNumber(string json,string key,double &value)
+{
+   string needle="\"" + key + "\":";
+   int p=StringFind(json,needle);
+   if(p<0) return false;
+   p+=StringLen(needle);
+   int e=p;
+   int n=StringLen(json);
+   while(e<n)
+   {
+      ushort ch=StringGetCharacter(json,e);
+      if((ch>='0' && ch<='9') || ch=='-' || ch=='+' || ch=='.' || ch=='e' || ch=='E') e++;
+      else break;
+   }
+   if(e<=p) return false;
+   value=StringToDouble(StringSubstr(json,p,e-p));
+   return true;
+}
+
+bool ApplyRiskSettings(string json)
+{
+   double v;
+   bool any=false;
+   if(ExtractNumber(json,"risk_percent",v) && v>=0.01 && v<=10.0) { riskPercentLive=v; any=true; }
+   if(ExtractNumber(json,"lot_size",v) && v>=0.001 && v<=100.0) { lotSizeLive=v; any=true; }
+   string sizing=ExtractString(json,"sizing_mode");
+   if(sizing=="RISK") { useRiskSizingLive=true; any=true; }
+   else if(sizing=="FIXED_LOT") { useRiskSizingLive=false; any=true; }
+   if(ExtractNumber(json,"sl_points",v) && v>=1 && v<=100000) { slPointsLive=(int)v; any=true; }
+   if(ExtractNumber(json,"tp_points",v) && v>=1 && v<=100000) { tpPointsLive=(int)v; any=true; }
+   if(ExtractNumber(json,"max_daily_loss",v) && v>=0.1 && v<=50.0) { maxDailyLossLive=v; any=true; }
+   if(ExtractNumber(json,"max_drawdown",v) && v>=0.1 && v<=90.0) { maxDrawdownLive=v; any=true; }
+   return any;
+}
 
 void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
 {
@@ -204,6 +357,78 @@ bool CloseAllPositions(string &message)
                            closed,found,failed,remaining);
 
    return remaining==0;
+}
+
+void ProcessRemoteCommands()
+{
+   if(!EnableRemoteControl || DeviceId=="" || EaToken=="") return;
+   string response;
+   if(!HttpRequest("GET",Url("/api/v1/devices/"+DeviceId+"/commands"),"",response,EaToken)) return;
+
+   int pos=0;
+   while(true)
+   {
+      string id=ExtractString(response,"command_id",pos);
+      if(id=="") break;
+      int idEnd=StringFind(response,"\"command_id\":\""+id+"\"",pos);
+      string cmd=ExtractString(response,"command",idEnd);
+      bool ok=true;
+      string msg="Command executed";
+
+      if(cmd=="SET_INSTRUMENT")
+      {
+         string targetBroker=ExtractString(response,"broker",idEnd);
+         string targetSymbol=ExtractString(response,"symbol",idEnd);
+         if(targetBroker=="" || targetSymbol=="")
+         {
+            ok=false;
+            msg="Missing broker or symbol";
+         }
+         else
+         {
+            string checkSymbol=targetSymbol;
+            StringToLower(checkSymbol);
+            bool synthetic=StringFind(checkSymbol,"vol")>=0 || StringFind(checkSymbol,"volatility")>=0;
+            string checkBroker=targetBroker;
+            StringToLower(checkBroker);
+            if((checkBroker!="weltrade" && checkBroker!="deriv") || !synthetic)
+            {
+               ok=false;
+               msg="Unsupported synthetic broker or symbol";
+            }
+            else if(!SymbolSelect(targetSymbol,true))
+            {
+               ok=false;
+               msg="Symbol is not available in this MT5 account: "+targetSymbol;
+            }
+            else
+            {
+               msg="Switching chart to "+targetBroker+" / "+targetSymbol;
+               Print("Leona: switching instrument to ",targetBroker," / ",targetSymbol);
+               ReportCommand(id,"COMPLETED",msg);
+               ChartSetSymbolPeriod(0,targetSymbol,PERIOD_M5);
+               return;
+            }
+         }
+      }
+      else if(cmd=="START_ROBOT") { remoteTradingEnabled=true; GlobalVariableSet("LEONA_EA_ACTIVE",1.0); }
+      else if(cmd=="STOP_ROBOT") { remoteTradingEnabled=false; GlobalVariableSet("LEONA_EA_ACTIVE",0.0); }
+      else if(cmd=="CLOSE_ALL")
+      {
+         ok=CloseAllPositions(msg);
+         if(!ok && msg=="") msg="One or more EA positions could not be closed.";
+      }
+      else if(cmd=="UPDATE_RISK")
+      {
+         if(ApplyRiskSettings(response))
+            msg=StringFormat("Sizing applied: %s, lot %.2f, risk %.2f%%, SL %d, TP %d, daily loss %.2f%%, drawdown %.2f%%",useRiskSizingLive?"RISK":"FIXED_LOT",lotSizeLive,riskPercentLive,slPointsLive,tpPointsLive,maxDailyLossLive,maxDrawdownLive);
+         else { ok=false; msg="Invalid or missing risk settings"; }
+      }
+      else { ok=false; msg="Unsupported command"; }
+
+      ReportCommand(id,ok?"COMPLETED":"FAILED",msg);
+      pos++;
+   }
 }
 
 bool BrokerAndSymbolOK()
@@ -618,22 +843,29 @@ int OnInit()
    tpPointsLive=TP_Points;
    maxDailyLossLive=MaxDailyLoss;
    maxDrawdownLive=MaxDrawdown;
-   remoteTradingEnabled=StartOnAttach && EA_Active;
+   remoteTradingEnabled=EA_Active;
    adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,(double)AIScoreThreshold));
    LoadLearningState();
-   CreateChartControls();
+   EventSetTimer(MathMax(1,RemotePollSeconds));
    diagnosticBlocker="INITIALIZED - WAITING FOR MARKET";
    UpdateChartStatus();
-   Print("Leona Pro X initialized in LOCAL CONTROL mode. StartOnAttach=",StartOnAttach);
+   Print("Leona Pro X initialized. DeviceId set=",DeviceId!=""," Token set=",EaToken!=""," Timer=",MathMax(1,RemotePollSeconds),"s");
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
-   DeleteChartControls();
    Comment("");
+   EventKillTimer();
    IndicatorRelease(handleMA); IndicatorRelease(handleRSI); IndicatorRelease(handleADX);
    IndicatorRelease(handleATR); IndicatorRelease(handleMACD);
+}
+
+void OnTimer()
+{
+   SendHeartbeat();
+   ProcessRemoteCommands();
+   UpdateChartStatus();
 }
 
 void OnTick()
