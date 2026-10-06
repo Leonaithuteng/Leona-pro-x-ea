@@ -1,6 +1,6 @@
 #property strict
-#property version "3.3"
-#property description "Leona Pro X EA v3.3 - standalone adaptive synthetic scalper with chart controls"
+#property version "3.4"
+#property description "Leona Pro X EA v3.4 - fast autonomous synthetic scalper with adaptive execution"
 
 #include <Trade/Trade.mqh>
 #include <Trade/SymbolInfo.mqh>
@@ -39,7 +39,7 @@ input double MinTrendStrength = 2.5;
 input int AIScoreThreshold = 0; // Informational only: AI score is NOT an entry blocker
 
 input group "Time & Cooldown"
-input int CooldownSeconds = 1;
+input int CooldownSeconds = 0; // 0 = no software delay between signal bursts
 input int MaxTradesPerHour = 0; // 0 = unlimited trades per hour
 input bool TradeDuringNews = false;
 input int StartHour = 0;
@@ -68,7 +68,7 @@ input bool DebugTrading = true;
 input bool AggressiveScalping = true;
 input int MaxOpenPositions = 0; // 0 = no EA position cap; broker free margin/position limits decide
 input int BurstOrderCap = 0; // 0 = no software burst cap; stop only when broker rejects or margin is insufficient
-input int MaxBurstAttempts = 1000; // hard loop guard against an execution/API anomaly
+input int MaxBurstAttempts = 1000; // per-burst safety guard; broker/margin rejection remains the hard execution limit
 input group "Profit Lot Scaling"
 input bool EnableProfitLotScaling = true;
 input double ProfitStepAmount = 1.0;
@@ -82,6 +82,13 @@ input double MinMarginLevel = 300.0;
 input double MaxLotPercentOfBalance = 5.0;
 input double BalancePerOpenTrade = 100.0;
 input int MaxSlippagePoints = 20;
+input group "Fast Execution Engine"
+input bool UseFastMomentumBias = true;
+input int FastEMAPeriod = 5;
+input int FastRSIPeriod = 7;
+input int MomentumLookbackBars = 3;
+input double MomentumMinPercent = 0.0; // 0 = directional bias only, never a blocker
+input bool RecalculateDirectionBeforeEachBurst = true;
 
 // Live remote risk settings and bounded adaptive-learning state
 double lotSizeLive=0.01;
@@ -112,6 +119,8 @@ int handleRSI = INVALID_HANDLE;
 int handleADX = INVALID_HANDLE;
 int handleATR = INVALID_HANDLE;
 int handleMACD = INVALID_HANDLE;
+int handleFastEMA = INVALID_HANDLE;
+int handleFastRSI = INVALID_HANDLE;
 
 datetime lastTradeTime = 0;
 int tradesThisHour = 0;
@@ -515,26 +524,111 @@ int AIScore()
    double adx=BufferValue(handleADX,0,0);
    double atr=BufferValue(handleATR,0,0);
 
-   if(ma==EMPTY_VALUE || rsi==EMPTY_VALUE || macd==EMPTY_VALUE || signal==EMPTY_VALUE || adx==EMPTY_VALUE || atr==EMPTY_VALUE) return 0;
+   if(ma==EMPTY_VALUE || rsi==EMPTY_VALUE || macd==EMPTY_VALUE || signal==EMPTY_VALUE || adx==EMPTY_VALUE || atr==EMPTY_VALUE)
+      return 0;
 
    double price=SymbolInfoDouble(_Symbol,SYMBOL_BID);
    int score=0;
+
+   // Core directional structure.
    score += price>ma ? 2 : -2;
    score += ma>maPrev ? 1 : -1;
    score += rsi>50 && rsi>rsiPrev ? 1 : -1;
+
    if(macd>signal && macdPrev<=signalPrev) score+=3;
    else if(macd<signal && macdPrev>=signalPrev) score-=3;
+   else if(macd>signal) score+=1;
+   else if(macd<signal) score-=1;
+
+   // ADX is directional information only; it never blocks an entry.
    if(adx>25) score += price>ma ? 2 : -2;
    if(adx>40) score += price>ma ? 1 : -1;
-   if(atr>100*_Point) score += price>ma ? 1 : -1;
-   if(atr>150*_Point) score += price>ma ? 1 : -1;
 
+   // Fast M1 momentum layer for earlier scalping entries.
+   if(UseFastMomentumBias && handleFastEMA!=INVALID_HANDLE)
+   {
+      double ema=BufferValue(handleFastEMA,0,0);
+      double emaPrev=BufferValue(handleFastEMA,0,1);
+      double fastRsi=BufferValue(handleFastRSI,0,0);
+      double fastRsiPrev=BufferValue(handleFastRSI,0,1);
+
+      if(ema!=EMPTY_VALUE)
+         score += price>ema ? 2 : -2;
+      if(ema!=EMPTY_VALUE && emaPrev!=EMPTY_VALUE)
+         score += ema>emaPrev ? 2 : -2;
+      if(fastRsi!=EMPTY_VALUE && fastRsiPrev!=EMPTY_VALUE)
+      {
+         if(fastRsi>52 && fastRsi>fastRsiPrev) score+=2;
+         else if(fastRsi<48 && fastRsi<fastRsiPrev) score-=2;
+      }
+
+      int bars=MathMax(1,MomentumLookbackBars);
+      double oldClose=iClose(_Symbol,PERIOD_M1,bars);
+      if(oldClose>0 && price>0)
+      {
+         double momentumPct=((price-oldClose)/oldClose)*100.0;
+         if(momentumPct>MomentumMinPercent) score+=2;
+         else if(momentumPct<(-MomentumMinPercent)) score-=2;
+      }
+   }
+
+   // Recent candle structure.
    double o1=iOpen(_Symbol,PERIOD_M1,1),c1=iClose(_Symbol,PERIOD_M1,1);
    double o2=iOpen(_Symbol,PERIOD_M1,2),c2=iClose(_Symbol,PERIOD_M1,2);
    if(c1>o1 && c2<o2 && c1>o2 && o1<c2) score+=2;
    if(c1<o1 && c2>o2 && c1<o2 && o1>c2) score-=2;
 
+   // ATR contributes directionally but is never a gate.
+   if(atr>0)
+      score += price>ma ? 1 : -1;
+
    return score;
+}
+
+bool FastDirection(bool &buy,bool &sell)
+{
+   buy=false;
+   sell=false;
+
+   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   if(bid<=0) return false;
+
+   double fastEMA=BufferValue(handleFastEMA,0,0);
+   double fastPrev=BufferValue(handleFastEMA,0,1);
+   double fastRSI=BufferValue(handleFastRSI,0,0);
+   double fastRSIPrev=BufferValue(handleFastRSI,0,1);
+
+   if(fastEMA==EMPTY_VALUE || fastPrev==EMPTY_VALUE || fastRSI==EMPTY_VALUE || fastRSIPrev==EMPTY_VALUE)
+      return false;
+
+   double prevClose=iClose(_Symbol,PERIOD_M1,1);
+   double oldClose=iClose(_Symbol,PERIOD_M1,MathMax(2,MomentumLookbackBars));
+
+   double momentumPct=0.0;
+   if(oldClose>0.0) momentumPct=((bid-oldClose)/oldClose)*100.0;
+
+   int bias=0;
+   if(bid>fastEMA) bias++;
+   else if(bid<fastEMA) bias--;
+
+   if(fastEMA>fastPrev) bias++;
+   else if(fastEMA<fastPrev) bias--;
+
+   if(fastRSI>52 && fastRSI>fastRSIPrev) bias+=2;
+   else if(fastRSI<48 && fastRSI<fastRSIPrev) bias-=2;
+
+   if(prevClose>0.0)
+   {
+      if(bid>prevClose) bias++;
+      else if(bid<prevClose) bias--;
+   }
+
+   if(momentumPct>MomentumMinPercent) bias++;
+   else if(momentumPct<(-MomentumMinPercent)) bias--;
+
+   if(bias>0) buy=true;
+   else if(bias<0) sell=true;
+   return true;
 }
 
 bool VolatilityOK()
@@ -837,8 +931,10 @@ int OnInit()
    handleADX=iADX(_Symbol,PERIOD_M1,14);
    handleATR=iATR(_Symbol,PERIOD_M1,14);
    handleMACD=iMACD(_Symbol,PERIOD_M1,12,26,9,PRICE_CLOSE);
+   handleFastEMA=iMA(_Symbol,PERIOD_M1,FastEMAPeriod,0,MODE_EMA,PRICE_CLOSE);
+   handleFastRSI=iRSI(_Symbol,PERIOD_M1,FastRSIPeriod,PRICE_CLOSE);
 
-   if(handleMA==INVALID_HANDLE || handleRSI==INVALID_HANDLE || handleADX==INVALID_HANDLE || handleATR==INVALID_HANDLE || handleMACD==INVALID_HANDLE)
+   if(handleMA==INVALID_HANDLE || handleRSI==INVALID_HANDLE || handleADX==INVALID_HANDLE || handleATR==INVALID_HANDLE || handleMACD==INVALID_HANDLE || handleFastEMA==INVALID_HANDLE || handleFastRSI==INVALID_HANDLE)
       return INIT_FAILED;
 
    startingBalance=AccountInfoDouble(ACCOUNT_BALANCE);
@@ -866,7 +962,7 @@ void OnDeinit(const int reason)
    Comment("");
    EventKillTimer();
    IndicatorRelease(handleMA); IndicatorRelease(handleRSI); IndicatorRelease(handleADX);
-   IndicatorRelease(handleATR); IndicatorRelease(handleMACD);
+   IndicatorRelease(handleATR); IndicatorRelease(handleMACD); IndicatorRelease(handleFastEMA); IndicatorRelease(handleFastRSI);
 }
 
 void OnTimer()
@@ -965,7 +1061,20 @@ void OnTick()
    double ma=BufferValue(handleMA,0,0);
    bool buySignal=(score>0);
    bool sellSignal=(score<0);
-   if(score==0 && ma!=EMPTY_VALUE && bid>0)
+
+   // Fast execution bias gets priority for entry direction, while the score
+   // remains informational. No AI threshold or MTF confirmation can block it.
+   if(UseFastMomentumBias)
+   {
+      bool fastBuy=false,fastSell=false;
+      if(FastDirection(fastBuy,fastSell))
+      {
+         if(fastBuy) { buySignal=true; sellSignal=false; }
+         else if(fastSell) { buySignal=false; sellSignal=true; }
+      }
+   }
+
+   if(!buySignal && !sellSignal && ma!=EMPTY_VALUE && bid>0)
    {
       buySignal=(bid>=ma);
       sellSignal=(bid<ma);
@@ -991,12 +1100,42 @@ void OnTick()
 
    if(buySignal)
    {
+      if(RecalculateDirectionBeforeEachBurst)
+      {
+         bool fastBuy=false,fastSell=false;
+         if(FastDirection(fastBuy,fastSell))
+         {
+            if(fastSell && !fastBuy)
+            {
+               diagnosticBlocker="DIRECTION FLIPPED TO SELL";
+               UpdateChartStatus();
+               int flipped=OpenSellBurst();
+               diagnosticBlocker=(flipped>0) ? "SELL BURST EXECUTED" : "SELL BURST BLOCKED";
+               return;
+            }
+         }
+      }
       diagnosticBlocker="BUY - HYPERACTIVE EXECUTION";
       int opened=OpenBuyBurst();
       diagnosticBlocker=(opened>0) ? "BUY BURST EXECUTED" : "BUY BURST BLOCKED";
    }
    else if(sellSignal)
    {
+      if(RecalculateDirectionBeforeEachBurst)
+      {
+         bool fastBuy=false,fastSell=false;
+         if(FastDirection(fastBuy,fastSell))
+         {
+            if(fastBuy && !fastSell)
+            {
+               diagnosticBlocker="DIRECTION FLIPPED TO BUY";
+               UpdateChartStatus();
+               int flipped=OpenBuyBurst();
+               diagnosticBlocker=(flipped>0) ? "BUY BURST EXECUTED" : "BUY BURST BLOCKED";
+               return;
+            }
+         }
+      }
       diagnosticBlocker="SELL - HYPERACTIVE EXECUTION";
       int opened=OpenSellBurst();
       diagnosticBlocker=(opened>0) ? "SELL BURST EXECUTED" : "SELL BURST BLOCKED";
