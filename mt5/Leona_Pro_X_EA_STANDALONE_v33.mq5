@@ -36,11 +36,11 @@ input double MaxATRPricePercent = 1.00;
 input double MinSyntheticATRPrice = 0.0;
 input double MaxSyntheticATRPrice = 1000000.0;
 input double MinTrendStrength = 2.5;
-input int AIScoreThreshold = 2; // Aggressive default: low threshold for frequent synthetic scalping entries
+input int AIScoreThreshold = 0; // Informational only: AI score is NOT an entry blocker
 
 input group "Time & Cooldown"
 input int CooldownSeconds = 1;
-input int MaxTradesPerHour = 100;
+input int MaxTradesPerHour = 0; // 0 = unlimited trades per hour
 input bool TradeDuringNews = false;
 input int StartHour = 0;
 input int EndHour = 23;
@@ -59,8 +59,8 @@ input bool UseEquityProtection = true;
 input int MaxConsecutiveLosses = 10;
 
 input group "Chart Controls"
-input bool StartOnAttach = true; // Fully autonomous: begin trading when the EA is attached
-input bool ShowChartControls = false; // Autonomous mode: no manual start/stop controls required
+input bool StartOnAttach = false; // First-trade gate: wait for START command once
+input bool ShowChartControls = true; // START once; then autonomous
 input bool ShowSignalDisplay = true;
 input bool ShowSignalMarkers = true;
 
@@ -121,7 +121,7 @@ double startingBalance = 0.0;
 double equityPeak = 0.0;
 datetime lastResetDate = 0;
 bool isTradingPaused = false;
-bool remoteTradingEnabled = true;
+bool remoteTradingEnabled = false;
 double riskPercentLive = 1.0;
 int slPointsLive = 150;
 int tpPointsLive = 250;
@@ -848,7 +848,7 @@ int OnInit()
    tpPointsLive=TP_Points;
    maxDailyLossLive=MaxDailyLoss;
    maxDrawdownLive=MaxDrawdown;
-   remoteTradingEnabled=EA_Active;
+   remoteTradingEnabled=false;
    adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,(double)AIScoreThreshold));
    LoadLearningState();
    EventSetTimer(1);
@@ -954,20 +954,26 @@ void OnTick()
 
    double adx=BufferValue(handleADX,0,0);
    diagnosticADX=(adx==EMPTY_VALUE ? 0.0 : adx);
-   // ADX is retained as an informational/AI input, but is no longer a hard
-   // entry blocker for the aggressive scalping build.
 
+   // HYPERACTIVE MODE: AI score is informational, never an entry blocker.
+   // Direction is selected from current M1 momentum/MA bias. MTF confirmation
+   // is advisory only; it cannot prevent a trade.
    int score=AIScore();
    diagnosticScore=score;
-   int threshold=(int)MathRound(EnableAdaptiveLearning ? adaptiveThreshold : (double)AIScoreThreshold);
-   if(AggressiveScalping) threshold=MathMax(1,threshold-1);
 
-   bool buyConfirm=MultiTimeframeConfirm(true);
-   bool sellConfirm=MultiTimeframeConfirm(false);
+   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   double ma=BufferValue(handleMA,0,0);
+   bool buySignal=(score>0);
+   bool sellSignal=(score<0);
+   if(score==0 && ma!=EMPTY_VALUE && bid>0)
+   {
+      buySignal=(bid>=ma);
+      sellSignal=(bid<ma);
+   }
 
    string displaySignal="WAITING";
-   if(score>=threshold && buyConfirm) displaySignal="BUY";
-   else if(score<=-threshold && sellConfirm) displaySignal="SELL";
+   if(buySignal) displaySignal="BUY";
+   else if(sellSignal) displaySignal="SELL";
    else if(!remoteTradingEnabled || isTradingPaused) displaySignal="PAUSED";
 
    UpdateSignalDisplay(displaySignal,score);
@@ -977,34 +983,23 @@ void OnTick()
       DrawSignalMarker("SELL",iTime(_Symbol,PERIOD_M1,0),SymbolInfoDouble(_Symbol,SYMBOL_ASK));
 
    if(DebugTrading)
-      Print("Leona SIGNAL CHECK: score=",score,
-            " threshold=",threshold,
-            " buyConfirm=",buyConfirm,
-            " sellConfirm=",sellConfirm,
+      Print("Leona HYPERACTIVE SIGNAL: score=",score,
+            " AI_BLOCKER=OFF",
+            " MTF_BLOCKER=OFF",
             " ADX=",DoubleToString(adx,2),
             " ATR=",DoubleToString(diagnosticATR,_Digits));
 
-   if(score>=threshold && buyConfirm)
+   if(buySignal)
    {
-      diagnosticBlocker="BUY SIGNAL - SENDING";
-      if(DebugTrading) Print("Leona DEBUG: BUY signal score=",score," threshold=",threshold," ADX=",adx);
+      diagnosticBlocker="BUY - HYPERACTIVE EXECUTION";
       int opened=OpenBuyBurst();
       diagnosticBlocker=(opened>0) ? "BUY BURST EXECUTED" : "BUY BURST BLOCKED";
    }
-   else if(score<=-threshold && sellConfirm)
+   else if(sellSignal)
    {
-      diagnosticBlocker="SELL SIGNAL - SENDING";
-      if(DebugTrading) Print("Leona DEBUG: SELL signal score=",score," threshold=",threshold," ADX=",adx);
+      diagnosticBlocker="SELL - HYPERACTIVE EXECUTION";
       int opened=OpenSellBurst();
       diagnosticBlocker=(opened>0) ? "SELL BURST EXECUTED" : "SELL BURST BLOCKED";
-   }
-   else if(score>=threshold || score<=-threshold)
-   {
-      diagnosticBlocker="AI SCORE OK - MTF CONFIRMATION";
-   }
-   else
-   {
-      diagnosticBlocker="WAITING FOR AI SCORE";
    }
 
    UpdateChartStatus();
