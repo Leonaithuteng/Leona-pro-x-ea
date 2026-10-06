@@ -163,14 +163,82 @@ def me(user: User = Depends(get_current_user)):
 
 @app.post("/api/v1/devices/register")
 def register_device(request: DeviceRegister, user: User = Depends(get_current_user), x_ea_token: Optional[str] = Header(default=None)):
+    """
+    Idempotent device registration.
+
+    Re-registering the same named MT5 device must not silently rotate the EA
+    token. Token rotation was the source of stale-token 401 failures when the
+    Android app was reinstalled or reopened.
+    """
     with SessionLocal() as db:
+        device = db.scalar(
+            select(Device).where(
+                Device.user_id == user.id,
+                Device.device_name == request.device_name,
+            ).order_by(desc(Device.id))
+        )
+
+        if device is not None:
+            if request.broker:
+                device.broker = request.broker
+            if request.account is not None:
+                device.account = request.account
+            device.status = "REGISTERED"
+            db.commit()
+            return {
+                "device_id": device.device_id,
+                "ea_token": device.token,
+                "status": "REGISTERED",
+                "reused": True,
+            }
+
         token = x_ea_token or secrets.token_urlsafe(32)
-        device_id = secrets.token_hex(8)
-        device = Device(user_id=user.id, device_id=device_id, device_name=request.device_name,
-                        broker=request.broker, account=request.account, token=token, status="REGISTERED")
+        existing_token = db.scalar(select(Device).where(Device.token == token))
+        if existing_token is not None:
+            token = secrets.token_urlsafe(32)
+
+        device = Device(
+            user_id=user.id,
+            device_id=secrets.token_hex(8),
+            device_name=request.device_name,
+            broker=request.broker,
+            account=request.account,
+            token=token,
+            status="REGISTERED",
+        )
         db.add(device)
         db.commit()
-        return {"device_id": device_id, "ea_token": token, "status": "REGISTERED"}
+        return {
+            "device_id": device.device_id,
+            "ea_token": token,
+            "status": "REGISTERED",
+            "reused": False,
+        }
+
+@app.get("/api/v1/devices/{device_id}/credentials")
+def device_credentials(device_id: str, user: User = Depends(get_current_user)):
+    """
+    Return the current MT5 device credentials to the authenticated owner.
+    This is intentionally protected by the normal mobile JWT and is used to
+    repair an EA that is running with an old token.
+    """
+    with SessionLocal() as db:
+        device = db.scalar(
+            select(Device).where(
+                Device.device_id == device_id,
+                Device.user_id == user.id,
+            )
+        )
+        if device is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        return {
+            "device_id": device.device_id,
+            "ea_token": device.token,
+            "device_name": device.device_name,
+            "broker": device.broker,
+            "account": device.account,
+            "status": device.status,
+        }
 
 @app.get("/api/v1/devices")
 def list_devices(user: User = Depends(get_current_user)):
