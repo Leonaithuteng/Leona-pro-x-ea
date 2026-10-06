@@ -55,8 +55,10 @@ input bool UseEquityProtection = true;
 input int MaxConsecutiveLosses = 10;
 
 input group "Chart Controls"
-input bool StartOnAttach = true;
+input bool StartOnAttach = false; // User presses START TRADING before new entries are allowed
 input bool ShowChartControls = true;
+input bool ShowSignalDisplay = true;
+input bool ShowSignalMarkers = true;
 
 input group "Remote Control"
 input string ApiBaseUrl = "https://leona-pro-x-api.onrender.com";
@@ -70,6 +72,11 @@ input bool SyntheticOnly = true;
 input bool DebugTrading = true;
 input bool AggressiveScalping = true;
 input int MaxOpenPositions = 100;
+input group "Profit Lot Scaling"
+input bool EnableProfitLotScaling = true;
+input double ProfitStepAmount = 1.0;
+input double LotIncreasePerProfitStep = 0.01;
+input double ProfitLotMax = 100.0;
 input double MinimumAccountBalance = 2.0;
 input int MinimumProfitScalePositions = 5;
 input double ProfitRequiredToScale = 0.01;
@@ -86,6 +93,8 @@ int learningTrades=0;
 int learningWins=0;
 int learningLosses=0;
 double learningNetProfit=0.0;
+string lastDisplayedSignal="WAITING";
+datetime lastSignalBar=0;
 double adaptiveThreshold=6.0;
 string diagnosticBlocker="STARTING";
 double diagnosticSpreadPoints=0.0;
@@ -127,6 +136,7 @@ double maxDrawdownLive = 10.0;
 const string BTN_START="LEONA_BTN_START";
 const string BTN_STOP="LEONA_BTN_STOP";
 const string BTN_CLOSE="LEONA_BTN_CLOSE";
+const string SIGNAL_LABEL="LEONA_SIGNAL_LABEL";
 
 void CreateControlButton(const string name,const string text,const int x,const int y,const color bg)
 {
@@ -154,10 +164,59 @@ void CreateControlButton(const string name,const string text,const int x,const i
    ObjectSetInteger(0,name,OBJPROP_ZORDER,100);
 }
 
+void CreateSignalDisplay()
+{
+   if(!ShowSignalDisplay) return;
+   if(ObjectFind(0,SIGNAL_LABEL)>=0) ObjectDelete(0,SIGNAL_LABEL);
+   if(!ObjectCreate(0,SIGNAL_LABEL,OBJ_LABEL,0,0,0))
+   {
+      Print("Leona: failed to create signal label error=",GetLastError());
+      return;
+   }
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_YDISTANCE,25);
+   ObjectSetString(0,SIGNAL_LABEL,OBJPROP_FONT,"Arial Bold");
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_FONTSIZE,18);
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_COLOR,clrSilver);
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_HIDDEN,true);
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_ZORDER,100);
+   ObjectSetString(0,SIGNAL_LABEL,OBJPROP_TEXT,"SIGNAL: WAITING");
+}
+
+void UpdateSignalDisplay(const string signal,const int score)
+{
+   if(!ShowSignalDisplay || ObjectFind(0,SIGNAL_LABEL)<0) return;
+   string text="SIGNAL: "+signal+" | SCORE: "+IntegerToString(score);
+   color clr=clrSilver;
+   if(signal=="BUY") clr=clrLime;
+   else if(signal=="SELL") clr=clrRed;
+   else if(signal=="PAUSED") clr=clrOrange;
+   ObjectSetString(0,SIGNAL_LABEL,OBJPROP_TEXT,text);
+   ObjectSetInteger(0,SIGNAL_LABEL,OBJPROP_COLOR,clr);
+}
+
+void DrawSignalMarker(const string signal,const datetime barTime,const double price)
+{
+   if(!ShowSignalMarkers || signal=="WAITING") return;
+   if(barTime==lastSignalBar && signal==lastDisplayedSignal) return;
+   string name="LEONA_SIGNAL_"+IntegerToString((int)barTime)+"_"+signal;
+   if(ObjectFind(0,name)>=0) return;
+   ENUM_OBJECT type=(signal=="BUY") ? OBJ_ARROW_BUY : OBJ_ARROW_SELL;
+   if(!ObjectCreate(0,name,type,0,barTime,price)) return;
+   ObjectSetInteger(0,name,OBJPROP_COLOR,(signal=="BUY") ? clrLime : clrRed);
+   ObjectSetInteger(0,name,OBJPROP_WIDTH,2);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   lastSignalBar=barTime;
+   lastDisplayedSignal=signal;
+}
+
 void CreateChartControls()
 {
    if(!ShowChartControls) return;
-   CreateControlButton(BTN_START,"START EA",10,25,clrGreen);
+   CreateControlButton(BTN_START,"START TRADING",10,25,clrGreen);
    CreateControlButton(BTN_STOP,"STOP EA",145,25,clrOrangeRed);
    CreateControlButton(BTN_CLOSE,"CLOSE ALL",280,25,clrRed);
    ChartRedraw();
@@ -168,6 +227,7 @@ void DeleteChartControls()
    ObjectDelete(0,BTN_START);
    ObjectDelete(0,BTN_STOP);
    ObjectDelete(0,BTN_CLOSE);
+   ObjectDelete(0,SIGNAL_LABEL);
 }
 
 void UpdateControlButtons()
@@ -175,7 +235,7 @@ void UpdateControlButtons()
    if(!ShowChartControls) return;
    bool active=EA_Active && remoteTradingEnabled && !isTradingPaused;
    if(ObjectFind(0,BTN_START)>=0)
-      ObjectSetString(0,BTN_START,OBJPROP_TEXT,active ? "EA RUNNING" : "START EA");
+      ObjectSetString(0,BTN_START,OBJPROP_TEXT,active ? "TRADING ON" : "START TRADING");
    if(ObjectFind(0,BTN_STOP)>=0)
       ObjectSetString(0,BTN_STOP,OBJPROP_TEXT,active ? "STOP EA" : "EA STOPPED");
    if(ObjectFind(0,BTN_CLOSE)>=0)
@@ -191,12 +251,14 @@ void OnChartEvent(const int id,const long& lparam,const double& dparam,const str
       remoteTradingEnabled=true;
       isTradingPaused=false;
       diagnosticBlocker="STARTED FROM CHART";
+      UpdateSignalDisplay("WAITING",diagnosticScore);
       Print("Leona: EA STARTED from chart.");
    }
    else if(sparam==BTN_STOP)
    {
       remoteTradingEnabled=false;
       diagnosticBlocker="STOPPED FROM CHART";
+      UpdateSignalDisplay("PAUSED",diagnosticScore);
       Print("Leona: EA STOPPED from chart. Existing positions remain managed.");
    }
    else if(sparam==BTN_CLOSE)
@@ -255,6 +317,7 @@ void UpdateChartStatus()
       "POSITIONS: ",CountLeonaPositions(),"/",MaxOpenPositions," | MARGIN LEVEL: ",DoubleToString(marginLevel,1),"%\n",
       "SPREAD: ",DoubleToString(diagnosticSpreadPoints,1)," pts | ATR: ",DoubleToString(diagnosticATR,_Digits),"\n",
       "BALANCE: ",DoubleToString(balance,2)," | EQUITY: ",DoubleToString(equity,2),"\n",
+      "LOT: ",DoubleToString(CalculateLotSize(),2)," | PROFIT SCALE: ",DoubleToString(MathMax(0.0,balance-startingBalance),2),"\n",
       "BLOCKER: ",diagnosticBlocker
    );
 }
@@ -782,24 +845,42 @@ double CalculateLotSize(double stopDistancePrice=0.0)
    if(maxLot<=0) maxLot=100.0;
    if(step<=0) step=minLot;
 
+   double baseLot=0.0;
    if(!useRiskSizingLive)
    {
-      double lot=MathMax(minLot,MathMin(maxLot,lotSizeLive));
-      lot=MathFloor(lot/step)*step;
-      return NormalizeDouble(MathMax(minLot,lot),2);
+      baseLot=lotSizeLive;
+   }
+   else
+   {
+      double balance=AccountInfoDouble(ACCOUNT_BALANCE);
+      double riskMoney=balance*MathMax(0.01,riskPercentLive)/100.0;
+      double tickValue=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+      double tickSize=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+      double distance=(stopDistancePrice>0 ? stopDistancePrice : slPointsLive*_Point);
+
+      if(tickValue>0 && tickSize>0 && distance>0)
+      {
+         double valuePerPriceUnit=tickValue/tickSize;
+         baseLot=riskMoney/(distance*valuePerPriceUnit);
+      }
+      else
+         baseLot=LotSize;
    }
 
-   double balance=AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskMoney=balance*MathMax(0.01,riskPercentLive)/100.0;
-   double tickValue=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
-   double tickSize=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
-   double distance=(stopDistancePrice>0 ? stopDistancePrice : slPointsLive*_Point);
+   if(baseLot<=0) baseLot=LotSize;
 
-   if(tickValue<=0 || tickSize<=0 || distance<=0)
-      return NormalizeDouble(MathMax(minLot,MathMin(maxLot,LotSize)),2);
+   // Explicit profit-based scaling: realized account profit increases the
+   // next trade's lot size in fixed increments. Losses never increase it.
+   double profit=AccountInfoDouble(ACCOUNT_BALANCE)-startingBalance;
+   double scaleLot=0.0;
+   if(EnableProfitLotScaling && ProfitStepAmount>0.0 && LotIncreasePerProfitStep>0.0 && profit>0.0)
+   {
+      int steps=(int)MathFloor(profit/ProfitStepAmount);
+      scaleLot=steps*LotIncreasePerProfitStep;
+   }
 
-   double valuePerPriceUnit=tickValue/tickSize;
-   double lot=riskMoney/(distance*valuePerPriceUnit);
+   double lot=baseLot+scaleLot;
+   lot=MathMin(lot,ProfitLotMax);
    lot=MathMax(minLot,MathMin(maxLot,lot));
    lot=MathFloor(lot/step)*step;
    return NormalizeDouble(MathMax(minLot,lot),2);
@@ -942,6 +1023,7 @@ int OnInit()
    EventSetTimer(MathMax(1,RemotePollSeconds));
    diagnosticBlocker="INITIALIZED - WAITING FOR MARKET";
    CreateChartControls();
+   CreateSignalDisplay();
    UpdateChartStatus();
    Print("Leona Pro X initialized. DeviceId set=",DeviceId!=""," Token set=",EaToken!=""," Timer=",MathMax(1,RemotePollSeconds),"s");
    return INIT_SUCCEEDED;
@@ -1052,6 +1134,17 @@ void OnTick()
 
    bool buyConfirm=MultiTimeframeConfirm(true);
    bool sellConfirm=MultiTimeframeConfirm(false);
+
+   string displaySignal="WAITING";
+   if(score>=threshold && buyConfirm) displaySignal="BUY";
+   else if(score<=-threshold && sellConfirm) displaySignal="SELL";
+   else if(!remoteTradingEnabled || isTradingPaused) displaySignal="PAUSED";
+
+   UpdateSignalDisplay(displaySignal,score);
+   if(displaySignal=="BUY")
+      DrawSignalMarker("BUY",iTime(_Symbol,PERIOD_M5,0),SymbolInfoDouble(_Symbol,SYMBOL_BID));
+   else if(displaySignal=="SELL")
+      DrawSignalMarker("SELL",iTime(_Symbol,PERIOD_M5,0),SymbolInfoDouble(_Symbol,SYMBOL_ASK));
 
    if(DebugTrading)
       Print("Leona SIGNAL CHECK: score=",score,
