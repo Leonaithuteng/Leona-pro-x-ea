@@ -21,6 +21,10 @@ input double ATR_SL_Multiplier = 1.20;
 input int ATR_MinSLPoints = 150;
 input int ATR_MaxSLPoints = 5000;
 input double ATR_RiskReward = 1.80;
+input bool UseDollarTP = true;
+input double MinTPProfitUSD = 1.0;
+input double MaxTPProfitUSD = 100.0;
+input double TPProfitUSDPerLot = 100.0;
 input bool EA_Active = true;
 
 input group "Filters"
@@ -42,10 +46,10 @@ input int StartHour = 0;
 input int EndHour = 23;
 
 input group "Exit Strategies"
-input bool UseTrailingStop = true;
+input bool UseTrailingStop = false;
 input int TrailingStart = 80;
 input int TrailingStep = 20;
-input bool UseBreakEven = true;
+input bool UseBreakEven = false;
 input int BreakEvenTrigger = 50;
 
 input group "Risk Management"
@@ -888,6 +892,21 @@ double CalculateLotSize(double stopDistancePrice=0.0)
    return NormalizeDouble(MathMax(minLot,lot),2);
 }
 
+double CalculateTPDistanceForProfit(double lot)
+{
+   double targetUSD=lot*TPProfitUSDPerLot;
+   targetUSD=MathMax(MinTPProfitUSD,MathMin(MaxTPProfitUSD,targetUSD));
+   double tickValue=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   double tickSize=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   if(tickValue<=0.0 || tickSize<=0.0 || lot<=0.0) return 0.0;
+   double valuePerPriceUnit=tickValue/tickSize;
+   double distance=targetUSD/(valuePerPriceUnit*lot);
+   double point=SymbolInfoDouble(_Symbol,SYMBOL_POINT);
+   double minStops=(double)SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL)*point;
+   if(point>0.0 && distance<minStops) distance=minStops;
+   return distance;
+}
+
 bool OpenBuy()
 {
    double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
@@ -898,8 +917,9 @@ bool OpenBuy()
    slDistance=MathMax(slDistance,ATR_MinSLPoints*_Point);
    slDistance=MathMin(slDistance,ATR_MaxSLPoints*_Point);
 
-   double tpDistance=UseATRStops ? slDistance*ATR_RiskReward : tpPointsLive*_Point;
    double lot=CalculateLotSize(slDistance);
+   double tpDistance=UseDollarTP ? CalculateTPDistanceForProfit(lot) : (UseATRStops ? slDistance*ATR_RiskReward : tpPointsLive*_Point);
+   if(tpDistance<=0.0) return false;
    if(DebugTrading) Print("Leona BUY PRECHECK: lot=",DoubleToString(lot,2),
                           " ask=",DoubleToString(ask,_Digits),
                           " SLdist=",DoubleToString(slDistance,_Digits),
@@ -1024,38 +1044,7 @@ int OpenSellBurst()
 
 void ManagePositions()
 {
-   for(int i=PositionsTotal()-1;i>=0;i--)
-   {
-      ulong ticket=PositionGetTicket(i);
-      if(ticket==0 || !PositionSelectByTicket(ticket)) continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=123456) continue;
-      string symbol=PositionGetString(POSITION_SYMBOL);
-      if(symbol!=_Symbol) continue;
-
-      long type=PositionGetInteger(POSITION_TYPE);
-      double open=PositionGetDouble(POSITION_PRICE_OPEN);
-      double sl=PositionGetDouble(POSITION_SL);
-      double tp=PositionGetDouble(POSITION_TP);
-      double price=type==POSITION_TYPE_BUY?SymbolInfoDouble(symbol,SYMBOL_BID):SymbolInfoDouble(symbol,SYMBOL_ASK);
-      double point=SymbolInfoDouble(symbol,SYMBOL_POINT);
-      if(point<=0) point=_Point;
-      double profitPoints=(type==POSITION_TYPE_BUY?(price-open):(open-price))/point;
-
-      if(UseBreakEven && profitPoints>=BreakEvenTrigger)
-      {
-         double newSL=NormalizeDouble(open,(int)SymbolInfoInteger(symbol,SYMBOL_DIGITS));
-         if((type==POSITION_TYPE_BUY && (sl<newSL || sl==0)) || (type==POSITION_TYPE_SELL && (sl>newSL || sl==0)))
-            trade.PositionModify(ticket,newSL,tp);
-      }
-
-      if(UseTrailingStop && profitPoints>=TrailingStart)
-      {
-         double newSL=type==POSITION_TYPE_BUY?price-TrailingStep*point:price+TrailingStep*point;
-         newSL=NormalizeDouble(newSL,(int)SymbolInfoInteger(symbol,SYMBOL_DIGITS));
-         if((type==POSITION_TYPE_BUY && newSL>sl) || (type==POSITION_TYPE_SELL && (newSL<sl || sl==0)))
-            trade.PositionModify(ticket,newSL,tp);
-      }
-   }
+   // Fixed initial SL/TP only. Trailing stop and break-even are disabled.
 }
 
 int OnInit()
