@@ -581,38 +581,16 @@ void ProcessRemoteCommands()
 
 bool BrokerAndSymbolOK()
 {
-   if(RequireSupportedBroker)
-   {
-      string company=AccountInfoString(ACCOUNT_COMPANY);
-      StringToLower(company);
-      bool brokerOk=false;
-      string allowed=AllowedBrokers;
-      StringToLower(allowed);
-      string parts[];
-      int count=StringSplit(allowed,',',parts);
-      for(int i=0;i<count;i++)
-      {
-         string name=parts[i];
-         StringTrimLeft(name);
-         StringTrimRight(name);
-         if(name!="" && StringFind(company,name)>=0)
-         {
-            brokerOk=true;
-            break;
-         }
-      }
-      if(!brokerOk) return false;
-   }
+   string company=AccountInfoString(ACCOUNT_COMPANY);
+   StringToLower(company);
 
-   if(!SyntheticOnly) return true;
+   // Autonomous synthetic-only operation; no broker/API selection is needed.
+   bool brokerOk=(StringFind(company,"weltrade")>=0 || StringFind(company,"deriv")>=0);
+   if(!brokerOk) return false;
 
    string symbol=_Symbol;
    StringToLower(symbol);
-   bool synthetic=
-      StringFind(symbol,"vol")>=0 ||
-      StringFind(symbol,"volatility")>=0;
-
-   return synthetic;
+   return StringFind(symbol,"vol")>=0 || StringFind(symbol,"volatility")>=0;
 }
 
 bool SpreadOK()
