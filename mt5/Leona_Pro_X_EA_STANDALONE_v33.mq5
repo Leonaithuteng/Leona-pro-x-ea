@@ -59,20 +59,11 @@ input bool UseEquityProtection = true;
 input int MaxConsecutiveLosses = 10;
 
 input group "Chart Controls"
-input bool StartOnAttach = false; // User presses START TRADING before new entries are allowed
-input bool ShowChartControls = true;
+input bool StartOnAttach = true; // Fully autonomous: begin trading when the EA is attached
+input bool ShowChartControls = false; // Autonomous mode: no manual start/stop controls required
 input bool ShowSignalDisplay = true;
 input bool ShowSignalMarkers = true;
 
-input group "Remote Control"
-input string ApiBaseUrl = "https://leona-pro-x-api.onrender.com";
-input string DeviceId = "";
-input string EaToken = "";
-input int RemotePollSeconds = 5;
-input bool EnableRemoteControl = false; // Standalone by default; MT5 chart controls operate locally
-input bool RequireSupportedBroker = true;
-input string AllowedBrokers = "weltrade,deriv";
-input bool SyntheticOnly = true;
 input bool DebugTrading = true;
 input bool AggressiveScalping = true;
 input int MaxOpenPositions = 0; // 0 = no EA position cap; broker free margin/position limits decide
@@ -107,8 +98,6 @@ double diagnosticSpreadPoints=0.0;
 double diagnosticATR=0.0;
 int diagnosticScore=0;
 double diagnosticADX=0.0;
-bool apiHeartbeatOK=false;
-datetime lastHeartbeatTime=0;
 input bool EnableAdaptiveLearning = true;
 input int LearningWindowTrades = 30;
 input double AdaptiveThresholdMin = 4.0;
@@ -285,8 +274,6 @@ string LearningKey(){ return "LeonaPX_Learn_"+IntegerToString((int)ChartID()); }
 void LoadLearningState(){ string k=LearningKey(); if(GlobalVariableCheck(k)) adaptiveThreshold=GlobalVariableGet(k); adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,adaptiveThreshold)); }
 void SaveLearningState(){ GlobalVariableSet(LearningKey(),adaptiveThreshold); }
 
-string Url(string path) { return ApiBaseUrl + path; }
-
 int CountLeonaPositions()
 {
    int count=0;
@@ -306,19 +293,18 @@ void UpdateChartStatus()
    double equity=AccountInfoDouble(ACCOUNT_EQUITY);
    double marginLevel=AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
    string company=AccountInfoString(ACCOUNT_COMPANY);
-   string apiState=apiHeartbeatOK ? "CONNECTED" : "WAITING";
    string runState=(!EA_Active || !remoteTradingEnabled || isTradingPaused) ? "PAUSED" : "ACTIVE";
    UpdateControlButtons();
    int threshold=(int)MathRound(EnableAdaptiveLearning ? adaptiveThreshold : (double)AIScoreThreshold);
    if(AggressiveScalping) threshold=MathMax(1,threshold-1);
 
    Comment(
-      "LEONA PRO X EA LIVE v3.2\n",
+      "LEONA PRO X EA LIVE v3.3 M1 AUTONOMOUS\n",
       "MODE: ",AggressiveScalping ? "AGGRESSIVE SCALPER" : "STANDARD SCALPER","\n",
       "STATUS: ",runState,"\n",
       "BROKER: ",company,"\n",
-      "SYMBOL: ",_Symbol," | M5\n",
-      "API: ",apiState," | HEARTBEAT: ",apiHeartbeatOK ? "OK" : "WAITING","\n",
+      "SYMBOL: ",_Symbol," | M1\n",
+      "CONTROL: FULLY AUTONOMOUS | M1 EXECUTION\n",
       "AI SCORE: ",diagnosticScore," | THRESHOLD: ",threshold," | ADX: ",DoubleToString(diagnosticADX,1),"\n",
       "POSITIONS: ",CountLeonaPositions(),"/",MaxOpenPositions," | MARGIN LEVEL: ",DoubleToString(marginLevel,1),"%\n",
       "SPREAD: ",DoubleToString(diagnosticSpreadPoints,1)," pts | ATR: ",DoubleToString(diagnosticATR,_Digits),"\n",
@@ -568,7 +554,7 @@ void ProcessRemoteCommands()
                msg="Switching chart to "+targetBroker+" / "+targetSymbol;
                Print("Leona: switching instrument to ",targetBroker," / ",targetSymbol);
                ReportCommand(id,"COMPLETED",msg);
-               ChartSetSymbolPeriod(0,targetSymbol,PERIOD_M5);
+               ChartSetSymbolPeriod(0,targetSymbol,PERIOD_M1);
                return;
             }
          }
@@ -749,8 +735,8 @@ int AIScore()
    if(atr>100*_Point) score += price>ma ? 1 : -1;
    if(atr>150*_Point) score += price>ma ? 1 : -1;
 
-   double o1=iOpen(_Symbol,PERIOD_M5,1),c1=iClose(_Symbol,PERIOD_M5,1);
-   double o2=iOpen(_Symbol,PERIOD_M5,2),c2=iClose(_Symbol,PERIOD_M5,2);
+   double o1=iOpen(_Symbol,PERIOD_M1,1),c1=iClose(_Symbol,PERIOD_M1,1);
+   double o2=iOpen(_Symbol,PERIOD_M1,2),c2=iClose(_Symbol,PERIOD_M1,2);
    if(c1>o1 && c2<o2 && c1>o2 && o1<c2) score+=2;
    if(c1<o1 && c2>o2 && c1<o2 && o1>c2) score-=2;
 
@@ -791,7 +777,7 @@ bool VolatilityOK()
 
 bool MultiTimeframeConfirm(bool buy)
 {
-   ENUM_TIMEFRAMES frames[3]={PERIOD_M5,PERIOD_M15,PERIOD_H1};
+   ENUM_TIMEFRAMES frames[3]={PERIOD_M1,PERIOD_M15,PERIOD_H1};
    int confirmed=0;
    for(int i=0;i<3;i++)
    {
@@ -1052,11 +1038,11 @@ int OnInit()
    trade.SetExpertMagicNumber(123456);
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetDeviationInPoints(MaxSlippagePoints);
-   handleMA=iMA(_Symbol,PERIOD_M5,20,0,MODE_SMA,PRICE_CLOSE);
-   handleRSI=iRSI(_Symbol,PERIOD_M5,14,PRICE_CLOSE);
-   handleADX=iADX(_Symbol,PERIOD_M5,14);
-   handleATR=iATR(_Symbol,PERIOD_M5,14);
-   handleMACD=iMACD(_Symbol,PERIOD_M5,12,26,9,PRICE_CLOSE);
+   handleMA=iMA(_Symbol,PERIOD_M1,20,0,MODE_SMA,PRICE_CLOSE);
+   handleRSI=iRSI(_Symbol,PERIOD_M1,14,PRICE_CLOSE);
+   handleADX=iADX(_Symbol,PERIOD_M1,14);
+   handleATR=iATR(_Symbol,PERIOD_M1,14);
+   handleMACD=iMACD(_Symbol,PERIOD_M1,12,26,9,PRICE_CLOSE);
 
    if(handleMA==INVALID_HANDLE || handleRSI==INVALID_HANDLE || handleADX==INVALID_HANDLE || handleATR==INVALID_HANDLE || handleMACD==INVALID_HANDLE)
       return INIT_FAILED;
@@ -1068,15 +1054,15 @@ int OnInit()
    tpPointsLive=TP_Points;
    maxDailyLossLive=MaxDailyLoss;
    maxDrawdownLive=MaxDrawdown;
-   remoteTradingEnabled=(StartOnAttach && EA_Active);
+   remoteTradingEnabled=EA_Active;
    adaptiveThreshold=MathMax(AdaptiveThresholdMin,MathMin(AdaptiveThresholdMax,(double)AIScoreThreshold));
    LoadLearningState();
-   EventSetTimer(MathMax(1,RemotePollSeconds));
+   EventSetTimer(1);
    diagnosticBlocker="INITIALIZED - WAITING FOR MARKET";
    CreateChartControls();
    CreateSignalDisplay();
    UpdateChartStatus();
-   Print("Leona Pro X initialized. DeviceId set=",DeviceId!=""," Token set=",EaToken!=""," Timer=",MathMax(1,RemotePollSeconds),"s");
+   Print("Leona Pro X initialized in FULLY AUTONOMOUS M1 mode. No API, device ID, token, or mobile control required.");
    return INIT_SUCCEEDED;
 }
 
@@ -1091,8 +1077,6 @@ void OnDeinit(const int reason)
 
 void OnTimer()
 {
-   SendHeartbeat();
-   ProcessRemoteCommands();
    UpdateChartStatus();
 }
 
@@ -1194,9 +1178,9 @@ void OnTick()
 
    UpdateSignalDisplay(displaySignal,score);
    if(displaySignal=="BUY")
-      DrawSignalMarker("BUY",iTime(_Symbol,PERIOD_M5,0),SymbolInfoDouble(_Symbol,SYMBOL_BID));
+      DrawSignalMarker("BUY",iTime(_Symbol,PERIOD_M1,0),SymbolInfoDouble(_Symbol,SYMBOL_BID));
    else if(displaySignal=="SELL")
-      DrawSignalMarker("SELL",iTime(_Symbol,PERIOD_M5,0),SymbolInfoDouble(_Symbol,SYMBOL_ASK));
+      DrawSignalMarker("SELL",iTime(_Symbol,PERIOD_M1,0),SymbolInfoDouble(_Symbol,SYMBOL_ASK));
 
    if(DebugTrading)
       Print("Leona SIGNAL CHECK: score=",score,
