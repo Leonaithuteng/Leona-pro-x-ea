@@ -71,7 +71,9 @@ input string AllowedBrokers = "weltrade,deriv";
 input bool SyntheticOnly = true;
 input bool DebugTrading = true;
 input bool AggressiveScalping = true;
-input int MaxOpenPositions = 100;
+input int MaxOpenPositions = 0; // 0 = no EA position cap; broker free margin/position limits decide
+input int BurstOrderCap = 0; // 0 = no software burst cap; stop only when broker rejects or margin is insufficient
+input int MaxBurstAttempts = 1000; // hard loop guard against an execution/API anomaly
 input group "Profit Lot Scaling"
 input bool EnableProfitLotScaling = true;
 input double ProfitStepAmount = 1.0;
@@ -886,11 +888,11 @@ double CalculateLotSize(double stopDistancePrice=0.0)
    return NormalizeDouble(MathMax(minLot,lot),2);
 }
 
-void OpenBuy()
+bool OpenBuy()
 {
    double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
    double atr=BufferValue(handleATR,0,0);
-   if(atr==EMPTY_VALUE || atr<=0) return;
+   if(atr==EMPTY_VALUE || atr<=0) return false;
 
    double slDistance=UseATRStops ? atr*ATR_SL_Multiplier : slPointsLive*_Point;
    slDistance=MathMax(slDistance,ATR_MinSLPoints*_Point);
@@ -903,31 +905,37 @@ void OpenBuy()
                           " SLdist=",DoubleToString(slDistance,_Digits),
                           " TPdist=",DoubleToString(tpDistance,_Digits));
 
-   if(!MarginAllowsNewTrade(ORDER_TYPE_BUY,lot,ask)) { if(DebugTrading) Print("Leona DEBUG: BUY blocked by available margin."); return; }
+   if(!MarginAllowsNewTrade(ORDER_TYPE_BUY,lot,ask))
+   {
+      if(DebugTrading) Print("Leona DEBUG: BUY burst stopped by available margin.");
+      return false;
+   }
 
    double sl=NormalizeDouble(ask-slDistance,_Digits);
    double tp=NormalizeDouble(ask+tpDistance,_Digits);
    bool sent=trade.Buy(lot,_Symbol,ask,sl,tp,"Leona Pro X BUY");
    uint rc=trade.ResultRetcode();
+
    if(sent && (rc==TRADE_RETCODE_DONE || rc==TRADE_RETCODE_DONE_PARTIAL || rc==TRADE_RETCODE_PLACED))
    {
-      lastTradeTime=TimeCurrent(); tradesThisHour++;
+      lastTradeTime=TimeCurrent();
+      tradesThisHour++;
       diagnosticBlocker="BUY EXECUTED";
       Print("Leona BUY EXECUTED. lot=",lot," SL=",sl," TP=",tp," retcode=",rc);
+      return true;
    }
-   else
-   {
-      diagnosticBlocker="BUY REJECTED";
-      Print("Leona BUY REJECTED. sent=",sent," retcode=",rc," description=",trade.ResultRetcodeDescription(),
-            " lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
-   }
+
+   diagnosticBlocker="BUY REJECTED";
+   Print("Leona BUY REJECTED. sent=",sent," retcode=",rc," description=",trade.ResultRetcodeDescription(),
+         " lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
+   return false;
 }
 
-void OpenSell()
+bool OpenSell()
 {
    double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
    double atr=BufferValue(handleATR,0,0);
-   if(atr==EMPTY_VALUE || atr<=0) return;
+   if(atr==EMPTY_VALUE || atr<=0) return false;
 
    double slDistance=UseATRStops ? atr*ATR_SL_Multiplier : slPointsLive*_Point;
    slDistance=MathMax(slDistance,ATR_MinSLPoints*_Point);
@@ -940,24 +948,78 @@ void OpenSell()
                           " SLdist=",DoubleToString(slDistance,_Digits),
                           " TPdist=",DoubleToString(tpDistance,_Digits));
 
-   if(!MarginAllowsNewTrade(ORDER_TYPE_SELL,lot,bid)) { if(DebugTrading) Print("Leona DEBUG: SELL blocked by available margin."); return; }
+   if(!MarginAllowsNewTrade(ORDER_TYPE_SELL,lot,bid))
+   {
+      if(DebugTrading) Print("Leona DEBUG: SELL burst stopped by available margin.");
+      return false;
+   }
 
    double sl=NormalizeDouble(bid+slDistance,_Digits);
    double tp=NormalizeDouble(bid-tpDistance,_Digits);
    bool sent=trade.Sell(lot,_Symbol,bid,sl,tp,"Leona Pro X SELL");
    uint rc=trade.ResultRetcode();
+
    if(sent && (rc==TRADE_RETCODE_DONE || rc==TRADE_RETCODE_DONE_PARTIAL || rc==TRADE_RETCODE_PLACED))
    {
-      lastTradeTime=TimeCurrent(); tradesThisHour++;
+      lastTradeTime=TimeCurrent();
+      tradesThisHour++;
       diagnosticBlocker="SELL EXECUTED";
       Print("Leona SELL EXECUTED. lot=",lot," SL=",sl," TP=",tp," retcode=",rc);
+      return true;
    }
-   else
+
+   diagnosticBlocker="SELL REJECTED";
+   Print("Leona SELL REJECTED. sent=",sent," retcode=",rc," description=",trade.ResultRetcodeDescription(),
+         " lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
+   return false;
+}
+
+int OpenBuyBurst()
+{
+   int opened=0;
+   int attempts=0;
+   while(attempts<MathMax(1,MaxBurstAttempts))
    {
-      diagnosticBlocker="SELL REJECTED";
-      Print("Leona SELL REJECTED. sent=",sent," retcode=",rc," description=",trade.ResultRetcodeDescription(),
-            " lot=",lot," spread=",SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
+      if(BurstOrderCap>0 && opened>=BurstOrderCap) break;
+      if(MaxOpenPositions>0 && CountLeonaPositions()>=MaxOpenPositions) break;
+
+      attempts++;
+      if(!OpenBuy()) break;
+      opened++;
+      // Re-read market price and free margin for the next order.
+      if(AccountInfoDouble(ACCOUNT_MARGIN_FREE)<=0.0) break;
    }
+
+   if(opened>0)
+      Print("Leona BUY BURST COMPLETE: opened=",opened,
+            " attempts=",attempts,
+            " total EA positions=",CountLeonaPositions());
+
+   return opened;
+}
+
+int OpenSellBurst()
+{
+   int opened=0;
+   int attempts=0;
+   while(attempts<MathMax(1,MaxBurstAttempts))
+   {
+      if(BurstOrderCap>0 && opened>=BurstOrderCap) break;
+      if(MaxOpenPositions>0 && CountLeonaPositions()>=MaxOpenPositions) break;
+
+      attempts++;
+      if(!OpenSell()) break;
+      opened++;
+      // Re-read market price and free margin for the next order.
+      if(AccountInfoDouble(ACCOUNT_MARGIN_FREE)<=0.0) break;
+   }
+
+   if(opened>0)
+      Print("Leona SELL BURST COMPLETE: opened=",opened,
+            " attempts=",attempts,
+            " total EA positions=",CountLeonaPositions());
+
+   return opened;
 }
 
 void ManagePositions()
@@ -1115,9 +1177,10 @@ void OnTick()
       return;
    }
 
-   if(TimeCurrent()-lastTradeTime<CooldownSeconds)
+   // Cooldown applies between signal evaluations, not between individual burst orders.
+   if(TimeCurrent()-lastTradeTime<CooldownSeconds && CountLeonaPositions()>0)
    {
-      diagnosticBlocker="COOLDOWN";
+      diagnosticBlocker="BURST COOLDOWN";
       UpdateChartStatus();
       return;
    }
@@ -1158,13 +1221,15 @@ void OnTick()
    {
       diagnosticBlocker="BUY SIGNAL - SENDING";
       if(DebugTrading) Print("Leona DEBUG: BUY signal score=",score," threshold=",threshold," ADX=",adx);
-      OpenBuy();
+      int opened=OpenBuyBurst();
+      diagnosticBlocker=(opened>0) ? "BUY BURST EXECUTED" : "BUY BURST BLOCKED";
    }
    else if(score<=-threshold && sellConfirm)
    {
       diagnosticBlocker="SELL SIGNAL - SENDING";
       if(DebugTrading) Print("Leona DEBUG: SELL signal score=",score," threshold=",threshold," ADX=",adx);
-      OpenSell();
+      int opened=OpenSellBurst();
+      diagnosticBlocker=(opened>0) ? "SELL BURST EXECUTED" : "SELL BURST BLOCKED";
    }
    else if(score>=threshold || score<=-threshold)
    {
