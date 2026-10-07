@@ -1,6 +1,6 @@
 #property strict
-#property version "3.5"
-#property description "Leona Pro X EA v3.5 - professional M5 aggressive scalper with SMC/ICT chart intelligence"
+#property version "3.6"
+#property description "Leona Pro X EA v3.6 - professional M5 aggressive scalper with SMC/ICT chart intelligence"
 
 #include <Trade/Trade.mqh>
 #include <Trade/SymbolInfo.mqh>
@@ -331,7 +331,7 @@ void UpdateChartStatus()
    if(AggressiveScalping) threshold=MathMax(1,threshold-1);
 
    Comment(
-      "LEONA PRO X EA LIVE v3.5 M5 PROFESSIONAL SCALPER\n",
+      "LEONA PRO X EA LIVE v3.6 M5 PROFESSIONAL SCALPER\n",
       "MODE: ",AggressiveScalping ? "AGGRESSIVE SCALPER" : "STANDARD SCALPER","\n",
       "STATUS: ",runState,"\n",
       "BROKER: ",company,"\n",
@@ -458,6 +458,8 @@ void AnalyzeSMC()
    lastSMCBar=bar;
 
    DeleteSMCObjects();
+   smcStructureState="NEUTRAL";
+   smcZoneState="NONE";
 
    int bars=MathMin(SMCStructureLookback,Bars(_Symbol,PERIOD_M5));
    if(bars<20) return;
@@ -1077,6 +1079,8 @@ bool OpenBuy()
    double slDistance=UseATRStops ? atr*ATR_SL_Multiplier : slPointsLive*_Point;
    slDistance=MathMax(slDistance,ATR_MinSLPoints*_Point);
    slDistance=MathMin(slDistance,ATR_MaxSLPoints*_Point);
+   double minStopDistance=(double)SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL)*_Point;
+   if(minStopDistance>0.0) slDistance=MathMax(slDistance,minStopDistance);
 
    double lot=CalculateLotSize(slDistance);
    double tpDistance=UseDollarTP ? CalculateTPDistanceForProfit(lot) : (UseATRStops ? slDistance*ATR_RiskReward : tpPointsLive*_Point);
@@ -1121,6 +1125,8 @@ bool OpenSell()
    double slDistance=UseATRStops ? atr*ATR_SL_Multiplier : slPointsLive*_Point;
    slDistance=MathMax(slDistance,ATR_MinSLPoints*_Point);
    slDistance=MathMin(slDistance,ATR_MaxSLPoints*_Point);
+   double minStopDistance=(double)SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL)*_Point;
+   if(minStopDistance>0.0) slDistance=MathMax(slDistance,minStopDistance);
 
    double lot=CalculateLotSize(slDistance);
    double tpDistance=UseDollarTP ? CalculateTPDistanceForProfit(lot) : (UseATRStops ? slDistance*ATR_RiskReward : tpPointsLive*_Point);
@@ -1239,7 +1245,7 @@ int OnInit()
    CreateChartControls();
    CreateSignalDisplay();
    UpdateChartStatus();
-   Print("Leona Pro X initialized in M5 PROFESSIONAL SCALPER mode. No API, device ID, token, or mobile control required.");
+   Print("Leona Pro X v3.6 initialized in M5 PROFESSIONAL SCALPER mode. No API, device ID, token, or mobile control required.");
    return INIT_SUCCEEDED;
 }
 
