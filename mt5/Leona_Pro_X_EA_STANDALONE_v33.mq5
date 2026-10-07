@@ -331,12 +331,12 @@ void UpdateChartStatus()
    if(AggressiveScalping) threshold=MathMax(1,threshold-1);
 
    Comment(
-      "LEONA PRO X EA LIVE v3.3 M5 AUTONOMOUS\n",
+      "LEONA PRO X EA LIVE v3.5 M5 PROFESSIONAL SCALPER\n",
       "MODE: ",AggressiveScalping ? "AGGRESSIVE SCALPER" : "STANDARD SCALPER","\n",
       "STATUS: ",runState,"\n",
       "BROKER: ",company,"\n",
       "SYMBOL: ",_Symbol," | M5\n",
-      "CONTROL: FULLY AUTONOMOUS | M5 EXECUTION\n",
+      "CONTROL: START ONCE | FULLY AUTONOMOUS | M5 EXECUTION\n",
       "AI SCORE: ",diagnosticScore," | THRESHOLD: ",threshold," | ADX: ",DoubleToString(diagnosticADX,1),"\n",
       "POSITIONS: ",CountLeonaPositions(),"/",MaxOpenPositions," | MARGIN LEVEL: ",DoubleToString(marginLevel,1),"%\n",
       "SPREAD: ",DoubleToString(diagnosticSpreadPoints,1)," pts | ATR: ",DoubleToString(diagnosticATR,_Digits),"\n",
@@ -831,7 +831,7 @@ int AIScore()
    if(adx>25) score += price>ma ? 2 : -2;
    if(adx>40) score += price>ma ? 1 : -1;
 
-   // Fast M1 momentum layer for earlier scalping entries.
+   // Fast M5 momentum layer for earlier scalping entries.
    if(UseFastMomentumBias && handleFastEMA!=INVALID_HANDLE)
    {
       double ema=BufferValue(handleFastEMA,0,0);
@@ -952,7 +952,7 @@ bool VolatilityOK()
 
 bool MultiTimeframeConfirm(bool buy)
 {
-   ENUM_TIMEFRAMES frames[3]={PERIOD_M5,PERIOD_M55,PERIOD_H1};
+   ENUM_TIMEFRAMES frames[3]={PERIOD_M5,PERIOD_M15,PERIOD_H1};
    int confirmed=0;
    for(int i=0;i<3;i++)
    {
@@ -1239,7 +1239,7 @@ int OnInit()
    CreateChartControls();
    CreateSignalDisplay();
    UpdateChartStatus();
-   Print("Leona Pro X initialized in FULLY AUTONOMOUS M5 mode. No API, device ID, token, or mobile control required.");
+   Print("Leona Pro X initialized in M5 PROFESSIONAL SCALPER mode. No API, device ID, token, or mobile control required.");
    return INIT_SUCCEEDED;
 }
 
