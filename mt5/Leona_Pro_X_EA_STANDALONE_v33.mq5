@@ -538,7 +538,6 @@ void AnalyzeSMC()
          {
             string n=SMC_PREFIX+"SWING_LOW_"+IntegerToString(shift);
             DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),l,"LOW",clrLime);
-            annotationCount++;
          }
          swingLowCount++;
       }
