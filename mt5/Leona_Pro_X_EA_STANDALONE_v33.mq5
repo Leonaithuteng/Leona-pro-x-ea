@@ -554,7 +554,7 @@ void AnalyzeSMC()
 
    for(int shift=bars-strength-1;shift>=strength+1;shift--)
    {
-      int candidate=shift+strength;
+      int candidate=shift+strength+1;
       if(candidate<bars-strength && candidate>shift)
       {
          if(IsSwingHigh(candidate,strength))
