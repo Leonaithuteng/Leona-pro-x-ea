@@ -1,6 +1,6 @@
 #property strict
-#property version "3.6"
-#property description "Leona Pro X EA v3.6 - professional M5 aggressive scalper with SMC/ICT chart intelligence"
+#property version "3.7"
+#property description "Leona Pro X EA v3.7 - full-history M5 aggressive scalper with SMC/ICT chart intelligence"
 
 #include <Trade/Trade.mqh>
 #include <Trade/SymbolInfo.mqh>
@@ -72,7 +72,7 @@ input bool ShowBreakerBlocks = true;
 input bool ShowPremiumDiscount = true;
 input bool ShowLiquidityHighsLows = true;
 input bool ShowReentryZones = true;
-input int SMCStructureLookback = 80;
+input int SMCStructureLookback = 0; // 0 = analyze all currently loaded M5 chart history
 input int SMCSwingStrength = 2;
 input int SMCZoneExtendBars = 35;
 input bool UseSMCForDirectionOnly = false; // SMC is visual/advisory; it never blocks an aggressive trade
@@ -331,7 +331,7 @@ void UpdateChartStatus()
    if(AggressiveScalping) threshold=MathMax(1,threshold-1);
 
    Comment(
-      "LEONA PRO X EA LIVE v3.6 M5 PROFESSIONAL SCALPER\n",
+      "LEONA PRO X EA LIVE v3.7 M5 PROFESSIONAL SCALPER\n",
       "MODE: ",AggressiveScalping ? "AGGRESSIVE SCALPER" : "STANDARD SCALPER","\n",
       "STATUS: ",runState,"\n",
       "BROKER: ",company,"\n",
@@ -1433,7 +1433,7 @@ int OnInit()
    CreateChartControls();
    CreateSignalDisplay();
    UpdateChartStatus();
-   Print("Leona Pro X v3.6 initialized in M5 PROFESSIONAL SCALPER mode. No API, device ID, token, or mobile control required.");
+   Print("Leona Pro X v3.7 initialized in M5 PROFESSIONAL SCALPER mode with full-history SMC mapping. No API, device ID, token, or mobile control required.");
    return INIT_SUCCEEDED;
 }
 
