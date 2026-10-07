@@ -102,6 +102,7 @@ input int FastRSIPeriod = 7;
 input int MomentumLookbackBars = 3;
 input double MomentumMinPercent = 0.0; // 0 = directional bias only, never a blocker
 input bool RecalculateDirectionBeforeEachBurst = true;
+input bool EnableMarketFilters = false; // false = no EA-imposed spread/time/volatility entry filters
 
 // Live remote risk settings and bounded adaptive-learning state
 double lotSizeLive=0.01;
@@ -1287,7 +1288,7 @@ void OnTick()
       return;
    }
 
-   if(!SpreadOK())
+   if(EnableMarketFilters && !SpreadOK())
    {
       diagnosticBlocker="SPREAD TOO HIGH";
       if(DebugTrading)
@@ -1297,7 +1298,7 @@ void OnTick()
       return;
    }
 
-   if(!TimeOK())
+   if(EnableMarketFilters && !TimeOK())
    {
       diagnosticBlocker="OUTSIDE TRADING HOURS";
       if(DebugTrading) Print("Leona DEBUG: blocked by trading hours.");
@@ -1313,7 +1314,7 @@ void OnTick()
       return;
    }
 
-   if(!VolatilityOK())
+   if(EnableMarketFilters && !VolatilityOK())
    {
       diagnosticBlocker="VOLATILITY FILTER";
       if(DebugTrading)
