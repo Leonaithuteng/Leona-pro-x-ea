@@ -459,7 +459,7 @@ void AnalyzeSMC()
    lastSMCBar=bar;
 
    // Rebuild the full SMC map on each newly closed M5 candle.
-   // The scan covers all currently loaded M5 history up to SMCStructureLookback.
+   // The scan covers all currently loaded M5 history when SMCStructureLookback is 0.
    DeleteSMCObjects();
    smcStructureState="NEUTRAL";
    smcZoneState="NONE";
@@ -514,7 +514,6 @@ void AnalyzeSMC()
    double lastHigh=0.0;
    double lastLow=0.0;
 
-   int annotationCount=0;
 
    for(int shift=bars-strength-1;shift>=strength+1;shift--)
    {
@@ -528,7 +527,6 @@ void AnalyzeSMC()
          {
             string n=SMC_PREFIX+"SWING_HIGH_"+IntegerToString(shift);
             DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),h,"HIGH",clrRed);
-            annotationCount++;
          }
          swingHighCount++;
       }
@@ -536,7 +534,7 @@ void AnalyzeSMC()
       if(sl)
       {
          double l=iLow(_Symbol,PERIOD_M5,shift);
-         if(ShowLiquidityHighsLows && annotationCount<maxAnnotations)
+         if(ShowLiquidityHighsLows)
          {
             string n=SMC_PREFIX+"SWING_LOW_"+IntegerToString(shift);
             DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),l,"LOW",clrLime);
