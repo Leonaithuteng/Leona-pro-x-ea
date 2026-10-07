@@ -1,6 +1,6 @@
 #property strict
 #property version "3.8"
-#property description "Leona Pro X EA v3.7 - full-history M5 aggressive scalper with SMC/ICT chart intelligence"
+#property description "Leona Pro X EA v3.8 - full-history M5 aggressive scalper with SMC/ICT chart intelligence"
 
 #include <Trade/Trade.mqh>
 #include <Trade/SymbolInfo.mqh>
@@ -545,39 +545,32 @@ void AnalyzeSMC()
 
    // ------------------------------------------------------------------
    // 3) Historical BOS / CHOCH / MSS.
-   //    Each closed candle is compared with the most recent confirmed
-   //    swing levels that existed at that point in history.
+   //    Single chronological pass keeps full-history analysis practical.
    // ------------------------------------------------------------------
    int bullishEvents=0;
    int bearishEvents=0;
+   int priorHigh=-1,priorLow=-1,olderHigh=-1,olderLow=-1;
+   double priorHighPrice=0.0,priorLowPrice=0.0,olderHighPrice=0.0,olderLowPrice=0.0;
 
    for(int shift=bars-strength-1;shift>=strength+1;shift--)
    {
-      double c=iClose(_Symbol,PERIOD_M5,shift);
-      if(c<=0) continue;
-
-      int priorHigh=-1;
-      int priorLow=-1;
-      double priorHighPrice=0.0;
-      double priorLowPrice=0.0;
-
-      for(int s=shift+strength+1;s<bars-strength;s++)
+      int candidate=shift+strength;
+      if(candidate<bars-strength && candidate>shift)
       {
-         if(priorHigh<0 && IsSwingHigh(s,strength))
+         if(IsSwingHigh(candidate,strength))
          {
-            priorHigh=s;
-            priorHighPrice=iHigh(_Symbol,PERIOD_M5,s);
+            olderHigh=priorHigh; olderHighPrice=priorHighPrice;
+            priorHigh=candidate; priorHighPrice=iHigh(_Symbol,PERIOD_M5,candidate);
          }
-         if(priorLow<0 && IsSwingLow(s,strength))
+         if(IsSwingLow(candidate,strength))
          {
-            priorLow=s;
-            priorLowPrice=iLow(_Symbol,PERIOD_M5,s);
+            olderLow=priorLow; olderLowPrice=priorLowPrice;
+            priorLow=candidate; priorLowPrice=iLow(_Symbol,PERIOD_M5,candidate);
          }
-         if(priorHigh>=0 && priorLow>=0) break;
       }
 
-      if(priorHigh<0 && priorLow<0) continue;
-
+      double c=iClose(_Symbol,PERIOD_M5,shift);
+      if(c<=0) continue;
       bool bullBreak=(priorHigh>=0 && c>priorHighPrice);
       bool bearBreak=(priorLow>=0 && c<priorLowPrice);
 
@@ -585,25 +578,8 @@ void AnalyzeSMC()
       {
          string n=SMC_PREFIX+"BOS_BULL_"+IntegerToString(shift);
          DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),c,"BOS",clrLime);
-
-         bool priorBearStructure=false;
-         int olderHigh=-1,olderLow=-1;
-         for(int s=priorHigh+strength+1;s<bars-strength;s++)
-         {
-            if(olderHigh<0 && IsSwingHigh(s,strength)) olderHigh=s;
-            if(olderLow<0 && IsSwingLow(s,strength)) olderLow=s;
-            if(olderHigh>=0 && olderLow>=0) break;
-         }
-         if(olderHigh>=0 && olderLow>=0)
-         {
-            double oh=iHigh(_Symbol,PERIOD_M5,olderHigh);
-            double ol=iLow(_Symbol,PERIOD_M5,olderLow);
-            if(priorHighPrice<oh || priorLowPrice<ol) priorBearStructure=true;
-         }
-
-         if(priorBearStructure)
+         if(olderHigh>=0 && olderLow>=0 && (priorHighPrice<olderHighPrice || priorLowPrice<olderLowPrice))
             DrawSMCText(n+"_CHOCH",iTime(_Symbol,PERIOD_M5,shift),c,"CHOCH / MSS",clrAqua);
-
          bullishEvents++;
       }
 
@@ -611,25 +587,8 @@ void AnalyzeSMC()
       {
          string n=SMC_PREFIX+"BOS_BEAR_"+IntegerToString(shift);
          DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),c,"BOS",clrTomato);
-
-         bool priorBullStructure=false;
-         int olderHigh=-1,olderLow=-1;
-         for(int s=priorLow+strength+1;s<bars-strength;s++)
-         {
-            if(olderHigh<0 && IsSwingHigh(s,strength)) olderHigh=s;
-            if(olderLow<0 && IsSwingLow(s,strength)) olderLow=s;
-            if(olderHigh>=0 && olderLow>=0) break;
-         }
-         if(olderHigh>=0 && olderLow>=0)
-         {
-            double oh=iHigh(_Symbol,PERIOD_M5,olderHigh);
-            double ol=iLow(_Symbol,PERIOD_M5,olderLow);
-            if(priorHighPrice>oh || priorLowPrice>ol) priorBullStructure=true;
-         }
-
-         if(priorBullStructure)
+         if(olderHigh>=0 && olderLow>=0 && (priorHighPrice>olderHighPrice || priorLowPrice>olderLowPrice))
             DrawSMCText(n+"_CHOCH",iTime(_Symbol,PERIOD_M5,shift),c,"CHOCH / MSS",clrOrange);
-
          bearishEvents++;
       }
    }
@@ -700,6 +659,8 @@ void AnalyzeSMC()
    {
       int obCount=0;
       int breakerCount=0;
+      double futureMaxClose=iClose(_Symbol,PERIOD_M5,1);
+      double futureMinClose=futureMaxClose;
 
       for(int shift=2;shift<bars-2;shift++)
       {
@@ -716,12 +677,7 @@ void AnalyzeSMC()
 
          if(bearishCandle && bullishDisplacement)
          {
-            bool broken=false;
-            for(int k=shift-1;k>=1;k--)
-            {
-               double kc=iClose(_Symbol,PERIOD_M5,k);
-               if(kc<l) { broken=true; break; }
-            }
+            bool broken=(futureMinClose<l);
 
             datetime t1=iTime(_Symbol,PERIOD_M5,shift);
             int endShift=MathMax(1,shift-SMCZoneExtendBars);
@@ -741,12 +697,7 @@ void AnalyzeSMC()
          }
          else if(bullishCandle && bearishDisplacement)
          {
-            bool broken=false;
-            for(int k=shift-1;k>=1;k--)
-            {
-               double kc=iClose(_Symbol,PERIOD_M5,k);
-               if(kc>h) { broken=true; break; }
-            }
+            bool broken=(futureMaxClose>h);
 
             datetime t1=iTime(_Symbol,PERIOD_M5,shift);
             int endShift=MathMax(1,shift-SMCZoneExtendBars);
@@ -764,6 +715,9 @@ void AnalyzeSMC()
                obCount++;
             }
          }
+         double closeForFuture=iClose(_Symbol,PERIOD_M5,shift);
+         if(closeForFuture>futureMaxClose) futureMaxClose=closeForFuture;
+         if(closeForFuture<futureMinClose) futureMinClose=closeForFuture;
       }
    }
 
@@ -1431,7 +1385,7 @@ int OnInit()
    CreateChartControls();
    CreateSignalDisplay();
    UpdateChartStatus();
-   Print("Leona Pro X v3.7 initialized in M5 PROFESSIONAL SCALPER mode with full-history SMC mapping. No API, device ID, token, or mobile control required.");
+   Print("Leona Pro X v3.8 initialized in M5 PROFESSIONAL SCALPER mode with full-history SMC mapping. No API, device ID, token, or mobile control required.");
    return INIT_SUCCEEDED;
 }
 
