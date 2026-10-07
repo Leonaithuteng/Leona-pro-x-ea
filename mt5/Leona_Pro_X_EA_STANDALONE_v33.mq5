@@ -1,5 +1,5 @@
 #property strict
-#property version "3.7"
+#property version "3.8"
 #property description "Leona Pro X EA v3.7 - full-history M5 aggressive scalper with SMC/ICT chart intelligence"
 
 #include <Trade/Trade.mqh>
@@ -72,9 +72,9 @@ input bool ShowBreakerBlocks = true;
 input bool ShowPremiumDiscount = true;
 input bool ShowLiquidityHighsLows = true;
 input bool ShowReentryZones = true;
-input int SMCStructureLookback = 0; // 0 = analyze all currently loaded M5 chart history
+input int SMCStructureLookback = 0; // 0 = analyze ALL currently loaded M5 chart history
 input int SMCSwingStrength = 2;
-input int SMCZoneExtendBars = 35;
+input int SMCZoneExtendBars = 0; // 0 = extend SMC zones to the latest loaded M5 candle
 input bool UseSMCForDirectionOnly = false; // SMC is visual/advisory; it never blocks an aggressive trade
 
 input bool DebugTrading = true;
@@ -331,7 +331,7 @@ void UpdateChartStatus()
    if(AggressiveScalping) threshold=MathMax(1,threshold-1);
 
    Comment(
-      "LEONA PRO X EA LIVE v3.7 M5 PROFESSIONAL SCALPER\n",
+      "LEONA PRO X EA LIVE v3.8 M5 PROFESSIONAL SCALPER\n",
       "MODE: ",AggressiveScalping ? "AGGRESSIVE SCALPER" : "STANDARD SCALPER","\n",
       "STATUS: ",runState,"\n",
       "BROKER: ",company,"\n",
@@ -470,6 +470,8 @@ void AnalyzeSMC()
    int strength=MathMax(1,SMCSwingStrength);
    if(bars<20 || bars<=strength*2+5) return;
 
+   // SMCStructureLookback=0 means no EA lookback restriction: every loaded
+   // M5 candle is analyzed and every detected structure is drawn.
    datetime newest=iTime(_Symbol,PERIOD_M5,1);
    datetime oldest=iTime(_Symbol,PERIOD_M5,bars-1);
 
@@ -512,7 +514,6 @@ void AnalyzeSMC()
    double lastHigh=0.0;
    double lastLow=0.0;
 
-   int maxAnnotations=600;
    int annotationCount=0;
 
    for(int shift=bars-strength-1;shift>=strength+1;shift--)
@@ -523,7 +524,7 @@ void AnalyzeSMC()
       if(sh)
       {
          double h=iHigh(_Symbol,PERIOD_M5,shift);
-         if(ShowLiquidityHighsLows && annotationCount<maxAnnotations)
+         if(ShowLiquidityHighsLows)
          {
             string n=SMC_PREFIX+"SWING_HIGH_"+IntegerToString(shift);
             DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),h,"HIGH",clrRed);
@@ -583,7 +584,7 @@ void AnalyzeSMC()
       bool bullBreak=(priorHigh>=0 && c>priorHighPrice);
       bool bearBreak=(priorLow>=0 && c<priorLowPrice);
 
-      if(bullBreak && bullishEvents<120 && ShowSMCStructure)
+      if(bullBreak && ShowSMCStructure)
       {
          string n=SMC_PREFIX+"BOS_BULL_"+IntegerToString(shift);
          DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),c,"BOS",clrLime);
@@ -609,7 +610,7 @@ void AnalyzeSMC()
          bullishEvents++;
       }
 
-      if(bearBreak && bearishEvents<120 && ShowSMCStructure)
+      if(bearBreak && ShowSMCStructure)
       {
          string n=SMC_PREFIX+"BOS_BEAR_"+IntegerToString(shift);
          DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),c,"BOS",clrTomato);
@@ -667,7 +668,7 @@ void AnalyzeSMC()
    if(ShowFVG)
    {
       int fvgCount=0;
-      for(int shift=1;shift<bars-2 && fvgCount<180;shift++)
+      for(int shift=1;shift<bars-2;shift++)
       {
          double olderHigh=iHigh(_Symbol,PERIOD_M5,shift+2);
          double olderLow=iLow(_Symbol,PERIOD_M5,shift+2);
@@ -677,7 +678,7 @@ void AnalyzeSMC()
          if(olderHigh<newerLow)
          {
             datetime t1=iTime(_Symbol,PERIOD_M5,shift+2);
-            int endShift=MathMax(1,shift-SMCZoneExtendBars);
+            int endShift=(SMCZoneExtendBars<=0 ? 1 : MathMax(1,shift-SMCZoneExtendBars));
             datetime t2=iTime(_Symbol,PERIOD_M5,endShift);
             string n=SMC_PREFIX+"FVG_BULL_"+IntegerToString(shift);
             DrawSMCZone(n,t1,olderHigh,t2,newerLow,clrAqua,"BULL FVG");
@@ -703,7 +704,7 @@ void AnalyzeSMC()
       int obCount=0;
       int breakerCount=0;
 
-      for(int shift=2;shift<bars-2 && (obCount+breakerCount)<180;shift++)
+      for(int shift=2;shift<bars-2;shift++)
       {
          double o=iOpen(_Symbol,PERIOD_M5,shift);
          double c=iClose(_Symbol,PERIOD_M5,shift);
@@ -784,7 +785,7 @@ void AnalyzeSMC()
          double tolerance=range*0.12;
          int reentryCount=0;
 
-         for(int shift=1;shift<bars-1 && reentryCount<120;shift++)
+         for(int shift=1;shift<bars-1;shift++)
          {
             double c=iClose(_Symbol,PERIOD_M5,shift);
             double prev=iClose(_Symbol,PERIOD_M5,shift+1);
