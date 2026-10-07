@@ -450,132 +450,260 @@ void DrawPremiumDiscount(const datetime newest,const datetime oldest)
 
 void AnalyzeSMC()
 {
-   if(!ShowSMCStructure && !ShowFVG && !ShowOrderBlocks && !ShowBreakerBlocks && !ShowPremiumDiscount && !ShowLiquidityHighsLows && !ShowReentryZones)
+   if(!ShowSMCStructure && !ShowFVG && !ShowOrderBlocks && !ShowBreakerBlocks &&
+      !ShowPremiumDiscount && !ShowLiquidityHighsLows && !ShowReentryZones)
       return;
 
    datetime bar=iTime(_Symbol,PERIOD_M5,1);
    if(bar<=0 || bar==lastSMCBar) return;
    lastSMCBar=bar;
 
+   // Rebuild the full SMC map on each newly closed M5 candle.
+   // The scan covers all currently loaded M5 history up to SMCStructureLookback.
    DeleteSMCObjects();
    smcStructureState="NEUTRAL";
    smcZoneState="NONE";
 
-   int bars=MathMin(SMCStructureLookback,Bars(_Symbol,PERIOD_M5));
-   if(bars<20) return;
-
-   int hi1=-1,hi2=-1,lo1=-1,lo2=-1;
-   double high1=0,high2=0,low1=0,low2=0;
+   int available=Bars(_Symbol,PERIOD_M5);
+   int bars=available;
+   if(SMCStructureLookback>0) bars=MathMin(SMCStructureLookback,available);
    int strength=MathMax(1,SMCSwingStrength);
+   if(bars<20 || bars<=strength*2+5) return;
 
-   for(int shift=strength+1;shift<bars-strength;shift++)
+   datetime newest=iTime(_Symbol,PERIOD_M5,1);
+   datetime oldest=iTime(_Symbol,PERIOD_M5,bars-1);
+
+   // ------------------------------------------------------------------
+   // 1) Whole-range premium / discount map.
+   // ------------------------------------------------------------------
+   smcRangeHigh=-DBL_MAX;
+   smcRangeLow=DBL_MAX;
+   int rangeHighShift=-1;
+   int rangeLowShift=-1;
+
+   for(int shift=1;shift<bars;shift++)
    {
-      if(hi1<0 && IsSwingHigh(shift,strength))
-      {
-         hi1=shift; high1=iHigh(_Symbol,PERIOD_M5,shift);
-      }
-      else if(hi2<0 && IsSwingHigh(shift,strength))
-      {
-         hi2=shift; high2=iHigh(_Symbol,PERIOD_M5,shift);
-      }
-
-      if(lo1<0 && IsSwingLow(shift,strength))
-      {
-         lo1=shift; low1=iLow(_Symbol,PERIOD_M5,shift);
-      }
-      else if(lo2<0 && IsSwingLow(shift,strength))
-      {
-         lo2=shift; low2=iLow(_Symbol,PERIOD_M5,shift);
-      }
-
-      if(hi2>=0 && lo2>=0) break;
+      double h=iHigh(_Symbol,PERIOD_M5,shift);
+      double l=iLow(_Symbol,PERIOD_M5,shift);
+      if(h>smcRangeHigh) { smcRangeHigh=h; rangeHighShift=shift; }
+      if(l<smcRangeLow)  { smcRangeLow=l;  rangeLowShift=shift; }
    }
 
-   if(hi1<0 || hi2<0 || lo1<0 || lo2<0) return;
+   if(smcRangeHigh<=smcRangeLow || rangeHighShift<0 || rangeLowShift<0) return;
 
-   smcRangeHigh=MathMax(high1,high2);
-   smcRangeLow=MathMin(low1,low2);
-   datetime newest=iTime(_Symbol,PERIOD_M5,1);
-   datetime oldest=iTime(_Symbol,PERIOD_M5,MathMin(bars-1,SMCStructureLookback-1));
-
-   if(ShowPremiumDiscount) DrawPremiumDiscount(newest,oldest);
+   if(ShowPremiumDiscount)
+      DrawPremiumDiscount(newest,oldest);
 
    if(ShowLiquidityHighsLows)
    {
-      DrawSMCText(SMC_PREFIX+"HIGH_1",iTime(_Symbol,PERIOD_M5,hi1),high1,"HIGH",clrRed);
-      DrawSMCText(SMC_PREFIX+"HIGH_2",iTime(_Symbol,PERIOD_M5,hi2),high2,"HIGH",clrRed);
-      DrawSMCText(SMC_PREFIX+"LOW_1",iTime(_Symbol,PERIOD_M5,lo1),low1,"LOW",clrLime);
-      DrawSMCText(SMC_PREFIX+"LOW_2",iTime(_Symbol,PERIOD_M5,lo2),low2,"LOW",clrLime);
+      DrawSMCText(SMC_PREFIX+"RANGE_HIGH",iTime(_Symbol,PERIOD_M5,rangeHighShift),
+                  smcRangeHigh,"RANGE HIGH",clrRed);
+      DrawSMCText(SMC_PREFIX+"RANGE_LOW",iTime(_Symbol,PERIOD_M5,rangeLowShift),
+                  smcRangeLow,"RANGE LOW",clrLime);
    }
 
-   // BOS / CHOCH / market-structure shift from the most recently closed M5 candle.
-   double close1=iClose(_Symbol,PERIOD_M5,1);
-   bool bullishBreak=(close1>high1);
-   bool bearishBreak=(close1<low1);
+   // ------------------------------------------------------------------
+   // 2) Detect every swing high/low across the loaded history.
+   // ------------------------------------------------------------------
+   int swingHighCount=0;
+   int swingLowCount=0;
+   int lastHighShift=-1;
+   int lastLowShift=-1;
+   double lastHigh=0.0;
+   double lastLow=0.0;
 
-   bool higherHigh=(high1>high2);
-   bool higherLow=(low1>low2);
-   bool lowerHigh=(high1<high2);
-   bool lowerLow=(low1<low2);
+   int maxAnnotations=600;
+   int annotationCount=0;
 
-   if(bullishBreak)
+   for(int shift=bars-strength-1;shift>=strength+1;shift--)
    {
-      smcStructureState=(lowerHigh || lowerLow) ? "CHOCH / MSS BULLISH" : "BOS BULLISH";
-      if(ShowSMCStructure)
+      bool sh=IsSwingHigh(shift,strength);
+      bool sl=IsSwingLow(shift,strength);
+
+      if(sh)
       {
-         DrawSMCText(SMC_PREFIX+"STRUCTURE",newest,high1,smcStructureState,clrLime);
-         DrawSMCZone(SMC_PREFIX+"BOS",iTime(_Symbol,PERIOD_M5,hi1),high1,newest,high1,clrLime,"BOS");
+         double h=iHigh(_Symbol,PERIOD_M5,shift);
+         if(ShowLiquidityHighsLows && annotationCount<maxAnnotations)
+         {
+            string n=SMC_PREFIX+"SWING_HIGH_"+IntegerToString(shift);
+            DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),h,"HIGH",clrRed);
+            annotationCount++;
+         }
+         swingHighCount++;
+      }
+
+      if(sl)
+      {
+         double l=iLow(_Symbol,PERIOD_M5,shift);
+         if(ShowLiquidityHighsLows && annotationCount<maxAnnotations)
+         {
+            string n=SMC_PREFIX+"SWING_LOW_"+IntegerToString(shift);
+            DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),l,"LOW",clrLime);
+            annotationCount++;
+         }
+         swingLowCount++;
       }
    }
-   else if(bearishBreak)
+
+   // ------------------------------------------------------------------
+   // 3) Historical BOS / CHOCH / MSS.
+   //    Each closed candle is compared with the most recent confirmed
+   //    swing levels that existed at that point in history.
+   // ------------------------------------------------------------------
+   int bullishEvents=0;
+   int bearishEvents=0;
+
+   for(int shift=bars-strength-1;shift>=strength+1;shift--)
    {
-      smcStructureState=(higherHigh || higherLow) ? "CHOCH / MSS BEARISH" : "BOS BEARISH";
-      if(ShowSMCStructure)
+      double c=iClose(_Symbol,PERIOD_M5,shift);
+      if(c<=0) continue;
+
+      int priorHigh=-1;
+      int priorLow=-1;
+      double priorHighPrice=0.0;
+      double priorLowPrice=0.0;
+
+      for(int s=shift+strength+1;s<bars-strength;s++)
       {
-         DrawSMCText(SMC_PREFIX+"STRUCTURE",newest,low1,smcStructureState,clrTomato);
-         DrawSMCZone(SMC_PREFIX+"BOS",iTime(_Symbol,PERIOD_M5,lo1),low1,newest,low1,clrTomato,"BOS");
+         if(priorHigh<0 && IsSwingHigh(s,strength))
+         {
+            priorHigh=s;
+            priorHighPrice=iHigh(_Symbol,PERIOD_M5,s);
+         }
+         if(priorLow<0 && IsSwingLow(s,strength))
+         {
+            priorLow=s;
+            priorLowPrice=iLow(_Symbol,PERIOD_M5,s);
+         }
+         if(priorHigh>=0 && priorLow>=0) break;
+      }
+
+      if(priorHigh<0 && priorLow<0) continue;
+
+      bool bullBreak=(priorHigh>=0 && c>priorHighPrice);
+      bool bearBreak=(priorLow>=0 && c<priorLowPrice);
+
+      if(bullBreak && bullishEvents<120 && ShowSMCStructure)
+      {
+         string n=SMC_PREFIX+"BOS_BULL_"+IntegerToString(shift);
+         DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),c,"BOS",clrLime);
+
+         bool priorBearStructure=false;
+         int olderHigh=-1,olderLow=-1;
+         for(int s=priorHigh+strength+1;s<bars-strength;s++)
+         {
+            if(olderHigh<0 && IsSwingHigh(s,strength)) olderHigh=s;
+            if(olderLow<0 && IsSwingLow(s,strength)) olderLow=s;
+            if(olderHigh>=0 && olderLow>=0) break;
+         }
+         if(olderHigh>=0 && olderLow>=0)
+         {
+            double oh=iHigh(_Symbol,PERIOD_M5,olderHigh);
+            double ol=iLow(_Symbol,PERIOD_M5,olderLow);
+            if(priorHighPrice<oh || priorLowPrice<ol) priorBearStructure=true;
+         }
+
+         if(priorBearStructure)
+            DrawSMCText(n+"_CHOCH",iTime(_Symbol,PERIOD_M5,shift),c,"CHOCH / MSS",clrAqua);
+
+         bullishEvents++;
+      }
+
+      if(bearBreak && bearishEvents<120 && ShowSMCStructure)
+      {
+         string n=SMC_PREFIX+"BOS_BEAR_"+IntegerToString(shift);
+         DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),c,"BOS",clrTomato);
+
+         bool priorBullStructure=false;
+         int olderHigh=-1,olderLow=-1;
+         for(int s=priorLow+strength+1;s<bars-strength;s++)
+         {
+            if(olderHigh<0 && IsSwingHigh(s,strength)) olderHigh=s;
+            if(olderLow<0 && IsSwingLow(s,strength)) olderLow=s;
+            if(olderHigh>=0 && olderLow>=0) break;
+         }
+         if(olderHigh>=0 && olderLow>=0)
+         {
+            double oh=iHigh(_Symbol,PERIOD_M5,olderHigh);
+            double ol=iLow(_Symbol,PERIOD_M5,olderLow);
+            if(priorHighPrice>oh || priorLowPrice>ol) priorBullStructure=true;
+         }
+
+         if(priorBullStructure)
+            DrawSMCText(n+"_CHOCH",iTime(_Symbol,PERIOD_M5,shift),c,"CHOCH / MSS",clrOrange);
+
+         bearishEvents++;
       }
    }
-   else
+
+   // Current structure state for the dashboard.
+   int recentHigh1=-1,recentHigh2=-1,recentLow1=-1,recentLow2=-1;
+   for(int shift=1;shift<bars-strength;shift++)
    {
-      if(higherHigh && higherLow) smcStructureState="BULLISH STRUCTURE";
-      else if(lowerHigh && lowerLow) smcStructureState="BEARISH STRUCTURE";
+      if(recentHigh1<0 && IsSwingHigh(shift,strength)) recentHigh1=shift;
+      else if(recentHigh2<0 && IsSwingHigh(shift,strength)) recentHigh2=shift;
+
+      if(recentLow1<0 && IsSwingLow(shift,strength)) recentLow1=shift;
+      else if(recentLow2<0 && IsSwingLow(shift,strength)) recentLow2=shift;
+
+      if(recentHigh2>=0 && recentLow2>=0) break;
+   }
+
+   if(recentHigh1>=0 && recentHigh2>=0 && recentLow1>=0 && recentLow2>=0)
+   {
+      double h1=iHigh(_Symbol,PERIOD_M5,recentHigh1);
+      double h2=iHigh(_Symbol,PERIOD_M5,recentHigh2);
+      double l1=iLow(_Symbol,PERIOD_M5,recentLow1);
+      double l2=iLow(_Symbol,PERIOD_M5,recentLow2);
+
+      if(h1>h2 && l1>l2) smcStructureState="BULLISH STRUCTURE";
+      else if(h1<h2 && l1<l2) smcStructureState="BEARISH STRUCTURE";
       else smcStructureState="MARKET STRUCTURE SHIFT WATCH";
-      if(ShowSMCStructure)
-         DrawSMCText(SMC_PREFIX+"STRUCTURE",newest,(smcRangeHigh+smcRangeLow)/2.0,smcStructureState,clrGold);
    }
 
-   // Most recent closed-bar Fair Value Gap.
+   // ------------------------------------------------------------------
+   // 4) Scan every historical 3-candle sequence for FVGs.
+   // ------------------------------------------------------------------
    if(ShowFVG)
    {
-      for(int shift=1;shift<MathMin(45,bars-3);shift++)
+      int fvgCount=0;
+      for(int shift=1;shift<bars-2 && fvgCount<180;shift++)
       {
          double olderHigh=iHigh(_Symbol,PERIOD_M5,shift+2);
          double olderLow=iLow(_Symbol,PERIOD_M5,shift+2);
          double newerHigh=iHigh(_Symbol,PERIOD_M5,shift);
          double newerLow=iLow(_Symbol,PERIOD_M5,shift);
+
          if(olderHigh<newerLow)
          {
             datetime t1=iTime(_Symbol,PERIOD_M5,shift+2);
-            datetime t2=iTime(_Symbol,PERIOD_M5,MathMax(1,shift-SMCZoneExtendBars));
-            DrawSMCZone(SMC_PREFIX+"FVG_BULL",t1,olderHigh,t2,newerLow,clrAqua,"BULL FVG");
-            break;
+            int endShift=MathMax(1,shift-SMCZoneExtendBars);
+            datetime t2=iTime(_Symbol,PERIOD_M5,endShift);
+            string n=SMC_PREFIX+"FVG_BULL_"+IntegerToString(shift);
+            DrawSMCZone(n,t1,olderHigh,t2,newerLow,clrAqua,"BULL FVG");
+            fvgCount++;
          }
-         if(olderLow>newerHigh)
+         else if(olderLow>newerHigh)
          {
             datetime t1=iTime(_Symbol,PERIOD_M5,shift+2);
-            datetime t2=iTime(_Symbol,PERIOD_M5,MathMax(1,shift-SMCZoneExtendBars));
-            DrawSMCZone(SMC_PREFIX+"FVG_BEAR",t1,olderLow,t2,newerHigh,clrOrange,"BEAR FVG");
-            break;
+            int endShift=MathMax(1,shift-SMCZoneExtendBars);
+            datetime t2=iTime(_Symbol,PERIOD_M5,endShift);
+            string n=SMC_PREFIX+"FVG_BEAR_"+IntegerToString(shift);
+            DrawSMCZone(n,t1,olderLow,t2,newerHigh,clrOrange,"BEAR FVG");
+            fvgCount++;
          }
       }
    }
 
-   // Order block + breaker approximation: last opposite candle before displacement,
-   // then flag it as a breaker when price subsequently closes through that zone.
+   // ------------------------------------------------------------------
+   // 5) Scan historical candles for Order Blocks and Breaker Blocks.
+   // ------------------------------------------------------------------
    if(ShowOrderBlocks || ShowBreakerBlocks)
    {
-      for(int shift=2;shift<MathMin(35,bars-2);shift++)
+      int obCount=0;
+      int breakerCount=0;
+
+      for(int shift=2;shift<bars-2 && (obCount+breakerCount)<180;shift++)
       {
          double o=iOpen(_Symbol,PERIOD_M5,shift);
          double c=iClose(_Symbol,PERIOD_M5,shift);
@@ -590,53 +718,113 @@ void AnalyzeSMC()
 
          if(bearishCandle && bullishDisplacement)
          {
-            datetime t1=iTime(_Symbol,PERIOD_M5,shift);
-            datetime t2=iTime(_Symbol,PERIOD_M5,MathMax(1,shift-SMCZoneExtendBars));
-            bool broken=(close1<l);
-            if(broken && ShowBreakerBlocks) DrawSMCZone(SMC_PREFIX+"BREAKER_BULL",t1,l,t2,h,clrMagenta,"BULL BREAKER");
-            else if(ShowOrderBlocks) DrawSMCZone(SMC_PREFIX+"OB_BULL",t1,l,t2,h,clrDodgerBlue,"BULL OB");
-            break;
-         }
+            bool broken=false;
+            for(int k=shift-1;k>=1;k--)
+            {
+               double kc=iClose(_Symbol,PERIOD_M5,k);
+               if(kc<l) { broken=true; break; }
+            }
 
-         if(bullishCandle && bearishDisplacement)
-         {
             datetime t1=iTime(_Symbol,PERIOD_M5,shift);
-            datetime t2=iTime(_Symbol,PERIOD_M5,MathMax(1,shift-SMCZoneExtendBars));
-            bool broken=(close1>h);
-            if(broken && ShowBreakerBlocks) DrawSMCZone(SMC_PREFIX+"BREAKER_BEAR",t1,l,t2,h,clrMagenta,"BEAR BREAKER");
-            else if(ShowOrderBlocks) DrawSMCZone(SMC_PREFIX+"OB_BEAR",t1,l,t2,h,clrOrangeRed,"BEAR OB");
-            break;
+            int endShift=MathMax(1,shift-SMCZoneExtendBars);
+            datetime t2=iTime(_Symbol,PERIOD_M5,endShift);
+            if(broken && ShowBreakerBlocks)
+            {
+               string n=SMC_PREFIX+"BREAKER_BULL_"+IntegerToString(shift);
+               DrawSMCZone(n,t1,l,t2,h,clrMagenta,"BULL BREAKER");
+               breakerCount++;
+            }
+            else if(!broken && ShowOrderBlocks)
+            {
+               string n=SMC_PREFIX+"OB_BULL_"+IntegerToString(shift);
+               DrawSMCZone(n,t1,l,t2,h,clrDodgerBlue,"BULL OB");
+               obCount++;
+            }
+         }
+         else if(bullishCandle && bearishDisplacement)
+         {
+            bool broken=false;
+            for(int k=shift-1;k>=1;k--)
+            {
+               double kc=iClose(_Symbol,PERIOD_M5,k);
+               if(kc>h) { broken=true; break; }
+            }
+
+            datetime t1=iTime(_Symbol,PERIOD_M5,shift);
+            int endShift=MathMax(1,shift-SMCZoneExtendBars);
+            datetime t2=iTime(_Symbol,PERIOD_M5,endShift);
+            if(broken && ShowBreakerBlocks)
+            {
+               string n=SMC_PREFIX+"BREAKER_BEAR_"+IntegerToString(shift);
+               DrawSMCZone(n,t1,l,t2,h,clrMagenta,"BEAR BREAKER");
+               breakerCount++;
+            }
+            else if(!broken && ShowOrderBlocks)
+            {
+               string n=SMC_PREFIX+"OB_BEAR_"+IntegerToString(shift);
+               DrawSMCZone(n,t1,l,t2,h,clrOrangeRed,"BEAR OB");
+               obCount++;
+            }
          }
       }
    }
 
-   // Re-entry watch: show when price is back inside the current dealing range
-   // around equilibrium after a structure impulse.
+   // ------------------------------------------------------------------
+   // 6) Historical possible re-entry markers.
+   //    Mark candles returning into premium/discount/equilibrium or
+   //    into a recent impulse zone. This is visual guidance only.
+   // ------------------------------------------------------------------
    if(ShowReentryZones)
    {
-      double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
       double eq=(smcRangeHigh+smcRangeLow)/2.0;
       double range=smcRangeHigh-smcRangeLow;
+
       if(range>0.0)
       {
          double tolerance=range*0.12;
-         if(MathAbs(bid-eq)<=tolerance)
+         int reentryCount=0;
+
+         for(int shift=1;shift<bars-1 && reentryCount<120;shift++)
          {
-            smcZoneState="POSSIBLE RE-ENTRY";
-            DrawSMCText(SMC_PREFIX+"REENTRY",newest,bid,"POSSIBLE RE-ENTRY",clrYellow);
+            double c=iClose(_Symbol,PERIOD_M5,shift);
+            double prev=iClose(_Symbol,PERIOD_M5,shift+1);
+            if(c<=0 || prev<=0) continue;
+
+            bool nearEQ=(MathAbs(c-eq)<=tolerance);
+            bool discount=(c>=smcDiscount && c<=eq);
+            bool premium=(c<=smcPremium && c>=eq);
+
+            // Require a directional move into the zone so every candle in
+            // a sideways area is not labelled as a re-entry.
+            double move=c-prev;
+            bool impulseReturn=((discount && move>0) || (premium && move<0) || nearEQ);
+
+            if(impulseReturn)
+            {
+               string n=SMC_PREFIX+"REENTRY_"+IntegerToString(shift);
+               string label=nearEQ ? "POSSIBLE RE-ENTRY" :
+                            (discount ? "RE-ENTRY: DISCOUNT" : "RE-ENTRY: PREMIUM");
+               color rc=nearEQ ? clrYellow : (discount ? clrAqua : clrOrange);
+               DrawSMCText(n,iTime(_Symbol,PERIOD_M5,shift),c,label,rc);
+               reentryCount++;
+            }
          }
-         else if(bid>=smcDiscount && bid<=eq)
-         {
-            smcZoneState="DISCOUNT RE-ENTRY WATCH";
-            DrawSMCText(SMC_PREFIX+"REENTRY",newest,bid,"RE-ENTRY: DISCOUNT",clrAqua);
-         }
-         else if(bid<=smcPremium && bid>=eq)
-         {
-            smcZoneState="PREMIUM RE-ENTRY WATCH";
-            DrawSMCText(SMC_PREFIX+"REENTRY",newest,bid,"RE-ENTRY: PREMIUM",clrOrange);
-         }
-         else smcZoneState="NONE";
       }
+   }
+
+   // Latest zone state for the dashboard.
+   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   double eq=(smcRangeHigh+smcRangeLow)/2.0;
+   if(bid>0.0)
+   {
+      if(MathAbs(bid-eq)<=((smcRangeHigh-smcRangeLow)*0.12))
+         smcZoneState="POSSIBLE RE-ENTRY";
+      else if(bid>=smcDiscount && bid<=eq)
+         smcZoneState="DISCOUNT RE-ENTRY WATCH";
+      else if(bid<=smcPremium && bid>=eq)
+         smcZoneState="PREMIUM RE-ENTRY WATCH";
+      else
+         smcZoneState="NONE";
    }
 }
 
