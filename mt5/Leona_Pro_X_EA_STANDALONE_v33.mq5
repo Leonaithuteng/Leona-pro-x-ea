@@ -1,6 +1,6 @@
 #property strict
-#property version "3.4"
-#property description "Leona Pro X EA v3.4 - fast autonomous synthetic scalper with adaptive execution"
+#property version "3.5"
+#property description "Leona Pro X EA v3.5 - professional M5 aggressive scalper with SMC/ICT chart intelligence"
 
 #include <Trade/Trade.mqh>
 #include <Trade/SymbolInfo.mqh>
@@ -63,6 +63,19 @@ input bool StartOnAttach = false; // First-trade gate: wait for START command on
 input bool ShowChartControls = true; // START once; then autonomous
 input bool ShowSignalDisplay = true;
 input bool ShowSignalMarkers = true;
+
+input group "SMC / ICT Chart Intelligence"
+input bool ShowSMCStructure = true;
+input bool ShowFVG = true;
+input bool ShowOrderBlocks = true;
+input bool ShowBreakerBlocks = true;
+input bool ShowPremiumDiscount = true;
+input bool ShowLiquidityHighsLows = true;
+input bool ShowReentryZones = true;
+input int SMCStructureLookback = 80;
+input int SMCSwingStrength = 2;
+input int SMCZoneExtendBars = 35;
+input bool UseSMCForDirectionOnly = false; // SMC is visual/advisory; it never blocks an aggressive trade
 
 input bool DebugTrading = true;
 input bool AggressiveScalping = true;
@@ -141,6 +154,15 @@ const string BTN_START="LEONA_BTN_START";
 const string BTN_STOP="LEONA_BTN_STOP";
 const string BTN_CLOSE="LEONA_BTN_CLOSE";
 const string SIGNAL_LABEL="LEONA_SIGNAL_LABEL";
+
+const string SMC_PREFIX="LEONA_SMC_";
+datetime lastSMCBar=0;
+string smcStructureState="NEUTRAL";
+string smcZoneState="NONE";
+double smcRangeHigh=0.0;
+double smcRangeLow=0.0;
+double smcPremium=0.0;
+double smcDiscount=0.0;
 
 void CreateControlButton(const string name,const string text,const int x,const int y,const color bg)
 {
@@ -308,17 +330,18 @@ void UpdateChartStatus()
    if(AggressiveScalping) threshold=MathMax(1,threshold-1);
 
    Comment(
-      "LEONA PRO X EA LIVE v3.3 M1 AUTONOMOUS\n",
+      "LEONA PRO X EA LIVE v3.3 M5 AUTONOMOUS\n",
       "MODE: ",AggressiveScalping ? "AGGRESSIVE SCALPER" : "STANDARD SCALPER","\n",
       "STATUS: ",runState,"\n",
       "BROKER: ",company,"\n",
-      "SYMBOL: ",_Symbol," | M1\n",
-      "CONTROL: FULLY AUTONOMOUS | M1 EXECUTION\n",
+      "SYMBOL: ",_Symbol," | M5\n",
+      "CONTROL: FULLY AUTONOMOUS | M5 EXECUTION\n",
       "AI SCORE: ",diagnosticScore," | THRESHOLD: ",threshold," | ADX: ",DoubleToString(diagnosticADX,1),"\n",
       "POSITIONS: ",CountLeonaPositions(),"/",MaxOpenPositions," | MARGIN LEVEL: ",DoubleToString(marginLevel,1),"%\n",
       "SPREAD: ",DoubleToString(diagnosticSpreadPoints,1)," pts | ATR: ",DoubleToString(diagnosticATR,_Digits),"\n",
       "BALANCE: ",DoubleToString(balance,2)," | EQUITY: ",DoubleToString(equity,2),"\n",
       "LOT: ",DoubleToString(CalculateLotSize(),2)," | PROFIT SCALE: ",DoubleToString(MathMax(0.0,balance-startingBalance),2),"\n",
+      "SMC: ",smcStructureState," | ZONE: ",smcZoneState,"\n",
       "BLOCKER: ",diagnosticBlocker
    );
 }
@@ -349,6 +372,269 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
       Print("Leona Learning: adjusted entry threshold to ",DoubleToString(adaptiveThreshold,2));
    }
    Print("Leona: closed trade P/L=",DoubleToString(pnl,2)," consecutive losses=",consecutiveLosses);
+}
+
+
+void DeleteSMCObjects()
+{
+   int total=ObjectsTotal(0,-1,-1);
+   for(int i=total-1;i>=0;i--)
+   {
+      string name=ObjectName(0,i,-1,-1);
+      if(StringFind(name,SMC_PREFIX)==0) ObjectDelete(0,name);
+   }
+}
+
+void DrawSMCText(const string name,const datetime t,const double price,const string text,const color clr)
+{
+   if(ObjectFind(0,name)>=0) ObjectDelete(0,name);
+   if(!ObjectCreate(0,name,OBJ_TEXT,0,t,price)) return;
+   ObjectSetString(0,name,OBJPROP_TEXT,text);
+   ObjectSetString(0,name,OBJPROP_FONT,"Arial Bold");
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,9);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_CENTER);
+   ObjectSetInteger(0,name,OBJPROP_BACK,false);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+}
+
+void DrawSMCZone(const string name,const datetime t1,const double p1,const datetime t2,const double p2,const color clr,const string label)
+{
+   if(ObjectFind(0,name)>=0) ObjectDelete(0,name);
+   if(!ObjectCreate(0,name,OBJ_RECTANGLE,0,t1,p1,t2,p2)) return;
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
+   ObjectSetInteger(0,name,OBJPROP_STYLE,STYLE_DOT);
+   ObjectSetInteger(0,name,OBJPROP_WIDTH,1);
+   ObjectSetInteger(0,name,OBJPROP_FILL,true);
+   ObjectSetInteger(0,name,OBJPROP_BACK,true);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   DrawSMCText(name+"_TXT",t2,p2,label,clr);
+}
+
+bool IsSwingHigh(const int shift,const int strength)
+{
+   double h=iHigh(_Symbol,PERIOD_M5,shift);
+   if(h<=0) return false;
+   for(int k=1;k<=strength;k++)
+   {
+      if(iHigh(_Symbol,PERIOD_M5,shift-k)>=h || iHigh(_Symbol,PERIOD_M5,shift+k)>=h) return false;
+   }
+   return true;
+}
+
+bool IsSwingLow(const int shift,const int strength)
+{
+   double l=iLow(_Symbol,PERIOD_M5,shift);
+   if(l<=0) return false;
+   for(int k=1;k<=strength;k++)
+   {
+      if(iLow(_Symbol,PERIOD_M5,shift-k)<=l || iLow(_Symbol,PERIOD_M5,shift+k)<=l) return false;
+   }
+   return true;
+}
+
+void DrawPremiumDiscount(const datetime newest,const datetime oldest)
+{
+   if(!ShowPremiumDiscount || smcRangeHigh<=smcRangeLow) return;
+   double eq=(smcRangeHigh+smcRangeLow)/2.0;
+   smcPremium=(smcRangeHigh+eq)/2.0;
+   smcDiscount=(smcRangeLow+eq)/2.0;
+
+   DrawSMCZone(SMC_PREFIX+"PREMIUM",oldest,eq,newest,smcRangeHigh,clrTomato,"PREMIUM");
+   DrawSMCZone(SMC_PREFIX+"DISCOUNT",oldest,smcRangeLow,newest,eq,clrDeepSkyBlue,"DISCOUNT");
+   DrawSMCText(SMC_PREFIX+"EQ",newest,eq,"EQUILIBRIUM",clrGold);
+}
+
+void AnalyzeSMC()
+{
+   if(!ShowSMCStructure && !ShowFVG && !ShowOrderBlocks && !ShowBreakerBlocks && !ShowPremiumDiscount && !ShowLiquidityHighsLows && !ShowReentryZones)
+      return;
+
+   datetime bar=iTime(_Symbol,PERIOD_M5,1);
+   if(bar<=0 || bar==lastSMCBar) return;
+   lastSMCBar=bar;
+
+   DeleteSMCObjects();
+
+   int bars=MathMin(SMCStructureLookback,Bars(_Symbol,PERIOD_M5));
+   if(bars<20) return;
+
+   int hi1=-1,hi2=-1,lo1=-1,lo2=-1;
+   double high1=0,high2=0,low1=0,low2=0;
+   int strength=MathMax(1,SMCSwingStrength);
+
+   for(int shift=strength+1;shift<bars-strength;shift++)
+   {
+      if(hi1<0 && IsSwingHigh(shift,strength))
+      {
+         hi1=shift; high1=iHigh(_Symbol,PERIOD_M5,shift);
+      }
+      else if(hi2<0 && IsSwingHigh(shift,strength))
+      {
+         hi2=shift; high2=iHigh(_Symbol,PERIOD_M5,shift);
+      }
+
+      if(lo1<0 && IsSwingLow(shift,strength))
+      {
+         lo1=shift; low1=iLow(_Symbol,PERIOD_M5,shift);
+      }
+      else if(lo2<0 && IsSwingLow(shift,strength))
+      {
+         lo2=shift; low2=iLow(_Symbol,PERIOD_M5,shift);
+      }
+
+      if(hi2>=0 && lo2>=0) break;
+   }
+
+   if(hi1<0 || hi2<0 || lo1<0 || lo2<0) return;
+
+   smcRangeHigh=MathMax(high1,high2);
+   smcRangeLow=MathMin(low1,low2);
+   datetime newest=iTime(_Symbol,PERIOD_M5,1);
+   datetime oldest=iTime(_Symbol,PERIOD_M5,MathMin(bars-1,SMCStructureLookback-1));
+
+   if(ShowPremiumDiscount) DrawPremiumDiscount(newest,oldest);
+
+   if(ShowLiquidityHighsLows)
+   {
+      DrawSMCText(SMC_PREFIX+"HIGH_1",iTime(_Symbol,PERIOD_M5,hi1),high1,"HIGH",clrRed);
+      DrawSMCText(SMC_PREFIX+"HIGH_2",iTime(_Symbol,PERIOD_M5,hi2),high2,"HIGH",clrRed);
+      DrawSMCText(SMC_PREFIX+"LOW_1",iTime(_Symbol,PERIOD_M5,lo1),low1,"LOW",clrLime);
+      DrawSMCText(SMC_PREFIX+"LOW_2",iTime(_Symbol,PERIOD_M5,lo2),low2,"LOW",clrLime);
+   }
+
+   // BOS / CHOCH / market-structure shift from the most recently closed M5 candle.
+   double close1=iClose(_Symbol,PERIOD_M5,1);
+   bool bullishBreak=(close1>high1);
+   bool bearishBreak=(close1<low1);
+
+   bool higherHigh=(high1>high2);
+   bool higherLow=(low1>low2);
+   bool lowerHigh=(high1<high2);
+   bool lowerLow=(low1<low2);
+
+   if(bullishBreak)
+   {
+      smcStructureState=(lowerHigh || lowerLow) ? "CHOCH / MSS BULLISH" : "BOS BULLISH";
+      if(ShowSMCStructure)
+      {
+         DrawSMCText(SMC_PREFIX+"STRUCTURE",newest,high1,smcStructureState,clrLime);
+         DrawSMCZone(SMC_PREFIX+"BOS",iTime(_Symbol,PERIOD_M5,hi1),high1,newest,high1,clrLime,"BOS");
+      }
+   }
+   else if(bearishBreak)
+   {
+      smcStructureState=(higherHigh || higherLow) ? "CHOCH / MSS BEARISH" : "BOS BEARISH";
+      if(ShowSMCStructure)
+      {
+         DrawSMCText(SMC_PREFIX+"STRUCTURE",newest,low1,smcStructureState,clrTomato);
+         DrawSMCZone(SMC_PREFIX+"BOS",iTime(_Symbol,PERIOD_M5,lo1),low1,newest,low1,clrTomato,"BOS");
+      }
+   }
+   else
+   {
+      if(higherHigh && higherLow) smcStructureState="BULLISH STRUCTURE";
+      else if(lowerHigh && lowerLow) smcStructureState="BEARISH STRUCTURE";
+      else smcStructureState="MARKET STRUCTURE SHIFT WATCH";
+      if(ShowSMCStructure)
+         DrawSMCText(SMC_PREFIX+"STRUCTURE",newest,(smcRangeHigh+smcRangeLow)/2.0,smcStructureState,clrGold);
+   }
+
+   // Most recent closed-bar Fair Value Gap.
+   if(ShowFVG)
+   {
+      for(int shift=1;shift<MathMin(45,bars-3);shift++)
+      {
+         double olderHigh=iHigh(_Symbol,PERIOD_M5,shift+2);
+         double olderLow=iLow(_Symbol,PERIOD_M5,shift+2);
+         double newerHigh=iHigh(_Symbol,PERIOD_M5,shift);
+         double newerLow=iLow(_Symbol,PERIOD_M5,shift);
+         if(olderHigh<newerLow)
+         {
+            datetime t1=iTime(_Symbol,PERIOD_M5,shift+2);
+            datetime t2=iTime(_Symbol,PERIOD_M5,MathMax(1,shift-SMCZoneExtendBars));
+            DrawSMCZone(SMC_PREFIX+"FVG_BULL",t1,olderHigh,t2,newerLow,clrAqua,"BULL FVG");
+            break;
+         }
+         if(olderLow>newerHigh)
+         {
+            datetime t1=iTime(_Symbol,PERIOD_M5,shift+2);
+            datetime t2=iTime(_Symbol,PERIOD_M5,MathMax(1,shift-SMCZoneExtendBars));
+            DrawSMCZone(SMC_PREFIX+"FVG_BEAR",t1,olderLow,t2,newerHigh,clrOrange,"BEAR FVG");
+            break;
+         }
+      }
+   }
+
+   // Order block + breaker approximation: last opposite candle before displacement,
+   // then flag it as a breaker when price subsequently closes through that zone.
+   if(ShowOrderBlocks || ShowBreakerBlocks)
+   {
+      for(int shift=2;shift<MathMin(35,bars-2);shift++)
+      {
+         double o=iOpen(_Symbol,PERIOD_M5,shift);
+         double c=iClose(_Symbol,PERIOD_M5,shift);
+         double h=iHigh(_Symbol,PERIOD_M5,shift);
+         double l=iLow(_Symbol,PERIOD_M5,shift);
+         double nextC=iClose(_Symbol,PERIOD_M5,shift-1);
+
+         bool bearishCandle=(c<o);
+         bool bullishCandle=(c>o);
+         bool bullishDisplacement=(nextC>h);
+         bool bearishDisplacement=(nextC<l);
+
+         if(bearishCandle && bullishDisplacement)
+         {
+            datetime t1=iTime(_Symbol,PERIOD_M5,shift);
+            datetime t2=iTime(_Symbol,PERIOD_M5,MathMax(1,shift-SMCZoneExtendBars));
+            bool broken=(close1<l);
+            if(broken && ShowBreakerBlocks) DrawSMCZone(SMC_PREFIX+"BREAKER_BULL",t1,l,t2,h,clrMagenta,"BULL BREAKER");
+            else if(ShowOrderBlocks) DrawSMCZone(SMC_PREFIX+"OB_BULL",t1,l,t2,h,clrDodgerBlue,"BULL OB");
+            break;
+         }
+
+         if(bullishCandle && bearishDisplacement)
+         {
+            datetime t1=iTime(_Symbol,PERIOD_M5,shift);
+            datetime t2=iTime(_Symbol,PERIOD_M5,MathMax(1,shift-SMCZoneExtendBars));
+            bool broken=(close1>h);
+            if(broken && ShowBreakerBlocks) DrawSMCZone(SMC_PREFIX+"BREAKER_BEAR",t1,l,t2,h,clrMagenta,"BEAR BREAKER");
+            else if(ShowOrderBlocks) DrawSMCZone(SMC_PREFIX+"OB_BEAR",t1,l,t2,h,clrOrangeRed,"BEAR OB");
+            break;
+         }
+      }
+   }
+
+   // Re-entry watch: show when price is back inside the current dealing range
+   // around equilibrium after a structure impulse.
+   if(ShowReentryZones)
+   {
+      double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
+      double eq=(smcRangeHigh+smcRangeLow)/2.0;
+      double range=smcRangeHigh-smcRangeLow;
+      if(range>0.0)
+      {
+         double tolerance=range*0.12;
+         if(MathAbs(bid-eq)<=tolerance)
+         {
+            smcZoneState="POSSIBLE RE-ENTRY";
+            DrawSMCText(SMC_PREFIX+"REENTRY",newest,bid,"POSSIBLE RE-ENTRY",clrYellow);
+         }
+         else if(bid>=smcDiscount && bid<=eq)
+         {
+            smcZoneState="DISCOUNT RE-ENTRY WATCH";
+            DrawSMCText(SMC_PREFIX+"REENTRY",newest,bid,"RE-ENTRY: DISCOUNT",clrAqua);
+         }
+         else if(bid<=smcPremium && bid>=eq)
+         {
+            smcZoneState="PREMIUM RE-ENTRY WATCH";
+            DrawSMCText(SMC_PREFIX+"REENTRY",newest,bid,"RE-ENTRY: PREMIUM",clrOrange);
+         }
+         else smcZoneState="NONE";
+      }
+   }
 }
 
 bool CloseAllPositions(string &message)
@@ -563,7 +849,7 @@ int AIScore()
       }
 
       int bars=MathMax(1,MomentumLookbackBars);
-      double oldClose=iClose(_Symbol,PERIOD_M1,bars);
+      double oldClose=iClose(_Symbol,PERIOD_M5,bars);
       if(oldClose>0 && price>0)
       {
          double momentumPct=((price-oldClose)/oldClose)*100.0;
@@ -573,8 +859,8 @@ int AIScore()
    }
 
    // Recent candle structure.
-   double o1=iOpen(_Symbol,PERIOD_M1,1),c1=iClose(_Symbol,PERIOD_M1,1);
-   double o2=iOpen(_Symbol,PERIOD_M1,2),c2=iClose(_Symbol,PERIOD_M1,2);
+   double o1=iOpen(_Symbol,PERIOD_M5,1),c1=iClose(_Symbol,PERIOD_M5,1);
+   double o2=iOpen(_Symbol,PERIOD_M5,2),c2=iClose(_Symbol,PERIOD_M5,2);
    if(c1>o1 && c2<o2 && c1>o2 && o1<c2) score+=2;
    if(c1<o1 && c2>o2 && c1<o2 && o1>c2) score-=2;
 
@@ -601,8 +887,8 @@ bool FastDirection(bool &buy,bool &sell)
    if(fastEMA==EMPTY_VALUE || fastPrev==EMPTY_VALUE || fastRSI==EMPTY_VALUE || fastRSIPrev==EMPTY_VALUE)
       return false;
 
-   double prevClose=iClose(_Symbol,PERIOD_M1,1);
-   double oldClose=iClose(_Symbol,PERIOD_M1,MathMax(2,MomentumLookbackBars));
+   double prevClose=iClose(_Symbol,PERIOD_M5,1);
+   double oldClose=iClose(_Symbol,PERIOD_M5,MathMax(2,MomentumLookbackBars));
 
    double momentumPct=0.0;
    if(oldClose>0.0) momentumPct=((bid-oldClose)/oldClose)*100.0;
@@ -665,7 +951,7 @@ bool VolatilityOK()
 
 bool MultiTimeframeConfirm(bool buy)
 {
-   ENUM_TIMEFRAMES frames[3]={PERIOD_M1,PERIOD_M15,PERIOD_H1};
+   ENUM_TIMEFRAMES frames[3]={PERIOD_M5,PERIOD_M55,PERIOD_H1};
    int confirmed=0;
    for(int i=0;i<3;i++)
    {
@@ -926,13 +1212,13 @@ int OnInit()
    trade.SetExpertMagicNumber(123456);
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetDeviationInPoints(MaxSlippagePoints);
-   handleMA=iMA(_Symbol,PERIOD_M1,20,0,MODE_SMA,PRICE_CLOSE);
-   handleRSI=iRSI(_Symbol,PERIOD_M1,14,PRICE_CLOSE);
-   handleADX=iADX(_Symbol,PERIOD_M1,14);
-   handleATR=iATR(_Symbol,PERIOD_M1,14);
-   handleMACD=iMACD(_Symbol,PERIOD_M1,12,26,9,PRICE_CLOSE);
-   handleFastEMA=iMA(_Symbol,PERIOD_M1,FastEMAPeriod,0,MODE_EMA,PRICE_CLOSE);
-   handleFastRSI=iRSI(_Symbol,PERIOD_M1,FastRSIPeriod,PRICE_CLOSE);
+   handleMA=iMA(_Symbol,PERIOD_M5,20,0,MODE_SMA,PRICE_CLOSE);
+   handleRSI=iRSI(_Symbol,PERIOD_M5,14,PRICE_CLOSE);
+   handleADX=iADX(_Symbol,PERIOD_M5,14);
+   handleATR=iATR(_Symbol,PERIOD_M5,14);
+   handleMACD=iMACD(_Symbol,PERIOD_M5,12,26,9,PRICE_CLOSE);
+   handleFastEMA=iMA(_Symbol,PERIOD_M5,FastEMAPeriod,0,MODE_EMA,PRICE_CLOSE);
+   handleFastRSI=iRSI(_Symbol,PERIOD_M5,FastRSIPeriod,PRICE_CLOSE);
 
    if(handleMA==INVALID_HANDLE || handleRSI==INVALID_HANDLE || handleADX==INVALID_HANDLE || handleATR==INVALID_HANDLE || handleMACD==INVALID_HANDLE || handleFastEMA==INVALID_HANDLE || handleFastRSI==INVALID_HANDLE)
       return INIT_FAILED;
@@ -952,7 +1238,7 @@ int OnInit()
    CreateChartControls();
    CreateSignalDisplay();
    UpdateChartStatus();
-   Print("Leona Pro X initialized in FULLY AUTONOMOUS M1 mode. No API, device ID, token, or mobile control required.");
+   Print("Leona Pro X initialized in FULLY AUTONOMOUS M5 mode. No API, device ID, token, or mobile control required.");
    return INIT_SUCCEEDED;
 }
 
@@ -973,6 +1259,7 @@ void OnTimer()
 void OnTick()
 {
    ManagePositions();
+   AnalyzeSMC();
 
    diagnosticScore=0;
    diagnosticADX=0.0;
@@ -1052,7 +1339,7 @@ void OnTick()
    diagnosticADX=(adx==EMPTY_VALUE ? 0.0 : adx);
 
    // HYPERACTIVE MODE: AI score is informational, never an entry blocker.
-   // Direction is selected from current M1 momentum/MA bias. MTF confirmation
+   // Direction is selected from current M5 momentum/MA bias. MTF confirmation
    // is advisory only; it cannot prevent a trade.
    int score=AIScore();
    diagnosticScore=score;
@@ -1087,12 +1374,12 @@ void OnTick()
 
    UpdateSignalDisplay(displaySignal,score);
    if(displaySignal=="BUY")
-      DrawSignalMarker("BUY",iTime(_Symbol,PERIOD_M1,0),SymbolInfoDouble(_Symbol,SYMBOL_BID));
+      DrawSignalMarker("BUY",iTime(_Symbol,PERIOD_M5,0),SymbolInfoDouble(_Symbol,SYMBOL_BID));
    else if(displaySignal=="SELL")
-      DrawSignalMarker("SELL",iTime(_Symbol,PERIOD_M1,0),SymbolInfoDouble(_Symbol,SYMBOL_ASK));
+      DrawSignalMarker("SELL",iTime(_Symbol,PERIOD_M5,0),SymbolInfoDouble(_Symbol,SYMBOL_ASK));
 
    if(DebugTrading)
-      Print("Leona HYPERACTIVE SIGNAL: score=",score,
+      Print("Leona HYPERACTIVE M5 SIGNAL: score=",score,
             " AI_BLOCKER=OFF",
             " MTF_BLOCKER=OFF",
             " ADX=",DoubleToString(adx,2),
